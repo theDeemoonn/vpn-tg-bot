@@ -1,0 +1,272 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const bot_1 = require("./bot");
+const express_1 = __importDefault(require("express"));
+const cors_1 = __importDefault(require("cors"));
+const path_1 = __importDefault(require("path"));
+const payment_1 = require("./services/payment");
+const database_1 = require("./services/database");
+const api_1 = __importDefault(require("./api"));
+const config_1 = __importDefault(require("./config"));
+const logger_1 = __importDefault(require("./utils/logger"));
+const subscriptionService = __importStar(require("./services/subscription"));
+// Обработчик необработанных исключений
+process.on('uncaughtException', (error) => {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : 'Стек недоступен';
+    logger_1.default.error(`Необработанное исключение: ${errorMessage}`);
+    logger_1.default.error(`Стек ошибки: ${stack}`);
+});
+// Обработчик необработанных отклонений промисов
+process.on('unhandledRejection', (reason, promise) => {
+    const errorMessage = reason instanceof Error ? reason.message : String(reason);
+    const stack = reason instanceof Error ? reason.stack : 'Стек недоступен';
+    logger_1.default.error(`Необработанное отклонение промиса: ${errorMessage}`);
+    logger_1.default.error(`Стек ошибки: ${stack}`);
+});
+// Функция для запуска фоновых задач
+function setupBackgroundTasks() {
+    logger_1.default.info('Настройка фоновых задач...');
+    
+    // Интервал для отправки напоминаний о подписках (каждый час)
+    const reminderInterval = 60 * 60 * 1000; // 1 час в миллисекундах
+    logger_1.default.info(`Настройка отправки напоминаний с интервалом ${reminderInterval}ms`);
+    
+    setInterval(() => {
+        if (config_1.default.enableAutoRenewal) {
+            logger_1.default.info('Запуск задачи отправки напоминаний о подписках...');
+            subscriptionService.sendSubscriptionReminders()
+                .then(() => {
+                    logger_1.default.info('Задача отправки напоминаний успешно выполнена');
+                })
+                .catch(error => {
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    logger_1.default.error(`Ошибка при отправке напоминаний: ${errorMessage}`);
+                    if (error instanceof Error && error.stack) {
+                        logger_1.default.debug(`Стек ошибки напоминаний: ${error.stack}`);
+                    }
+                });
+        }
+    }, reminderInterval);
+    
+    // Интервал для обработки автопродлений (каждые 6 часов)
+    const renewalInterval = 6 * 60 * 60 * 1000; // 6 часов в миллисекундах
+    logger_1.default.info(`Настройка автопродлений с интервалом ${renewalInterval}ms`);
+    
+    setInterval(() => {
+        if (config_1.default.enableAutoRenewal) {
+            logger_1.default.info('Запуск задачи обработки автопродлений...');
+            subscriptionService.processAutoRenewals()
+                .then(() => {
+                    logger_1.default.info('Задача обработки автопродлений успешно выполнена');
+                })
+                .catch(error => {
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    logger_1.default.error(`Ошибка при обработке автопродлений: ${errorMessage}`);
+                    if (error instanceof Error && error.stack) {
+                        logger_1.default.debug(`Стек ошибки автопродлений: ${error.stack}`);
+                    }
+                });
+        }
+    }, renewalInterval);
+    
+    // Интервал для обновления статусов подписок (каждые 30 минут)
+    const statusUpdateInterval = 30 * 60 * 1000; // 30 минут в миллисекундах
+    logger_1.default.info(`Настройка обновления статусов подписок с интервалом ${statusUpdateInterval}ms`);
+    
+    setInterval(() => {
+        logger_1.default.info('Запуск задачи обновления статусов подписок...');
+        subscriptionService.updateSubscriptionStatuses()
+            .then(() => {
+                logger_1.default.info('Задача обновления статусов подписок успешно выполнена');
+            })
+            .catch(error => {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                logger_1.default.error(`Ошибка при обновлении статусов подписок: ${errorMessage}`);
+                if (error instanceof Error && error.stack) {
+                    logger_1.default.debug(`Стек ошибки обновления статусов: ${error.stack}`);
+                }
+            });
+    }, statusUpdateInterval);
+    
+    // Сразу запускаем задачи при старте
+    logger_1.default.info('Запуск начальных задач...');
+    
+    // Обновление статусов подписок
+    subscriptionService.updateSubscriptionStatuses()
+        .then(() => {
+            logger_1.default.info('Начальное обновление статусов подписок выполнено');
+        })
+        .catch(error => {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            logger_1.default.error(`Ошибка при начальном обновлении статусов подписок: ${errorMessage}`);
+        });
+    
+    // Отправка напоминаний и автопродление, если включено
+    if (config_1.default.enableAutoRenewal) {
+        // Напоминания
+        subscriptionService.sendSubscriptionReminders()
+            .then(() => {
+                logger_1.default.info('Начальная отправка напоминаний выполнена');
+            })
+            .catch(error => {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                logger_1.default.error(`Ошибка при начальной отправке напоминаний: ${errorMessage}`);
+            });
+        
+        // Автопродления
+        subscriptionService.processAutoRenewals()
+            .then(() => {
+                logger_1.default.info('Начальная обработка автопродлений выполнена');
+            })
+            .catch(error => {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                logger_1.default.error(`Ошибка при начальной обработке автопродлений: ${errorMessage}`);
+            });
+    }
+    
+    logger_1.default.info('Фоновые задачи настроены успешно');
+}
+// Запуск приложения
+function startApp() {
+    return __awaiter(this, void 0, void 0, function* () {
+        try {
+            // Запускаем Telegram бота
+            yield (0, bot_1.startBot)();
+            
+            // Настраиваем фоновые задачи
+            setupBackgroundTasks();
+            
+            // Создаем Express приложение для обработки вебхуков и API
+            const app = (0, express_1.default)();
+            
+            // Middleware
+            app.use(express_1.default.json());
+            app.use((0, cors_1.default)()); // Добавляем поддержку CORS для API
+            
+            // Роут для вебхуков от ЮKassa
+            app.post('/webhooks/payment', (req, res) => __awaiter(this, void 0, void 0, function* () {
+                try {
+                    logger_1.default.info(`Получен вебхук платежа: ${JSON.stringify(req.body)}`);
+                    yield (0, payment_1.handlePaymentWebhook)(req.body);
+                    logger_1.default.info('Вебхук платежа успешно обработан');
+                    res.status(200).send('OK');
+                }
+                catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    logger_1.default.error(`Ошибка при обработке вебхука платежа: ${errorMessage}`);
+                    if (error instanceof Error && error.stack) {
+                        logger_1.default.debug(`Стек ошибки вебхука: ${error.stack}`);
+                    }
+                    res.status(500).send('Internal Server Error');
+                }
+            }));
+            
+            // Подключаем API маршруты
+            app.use('/api', api_1.default);
+            
+            // Раздаем статические файлы админ-панели
+            const adminPath = path_1.default.join(__dirname, 'admin');
+            app.use('/admin', express_1.default.static(adminPath));
+            
+            // Обрабатываем все маршруты админ-панели, чтобы работал client-side роутинг
+            app.get('/admin/*', (req, res) => {
+                res.sendFile(path_1.default.join(adminPath, 'index.html'));
+            });
+            
+            // Роут для проверки работоспособности
+            app.get('/health', (req, res) => {
+                res.status(200).send('OK');
+            });
+            
+            // Запускаем сервер
+            app.listen(config_1.default.port, config_1.default.host, () => {
+                logger_1.default.info(`Сервер запущен на http://${config_1.default.host}:${config_1.default.port}`);
+                logger_1.default.info(`Админ-панель доступна по адресу http://${config_1.default.host}:${config_1.default.port}/admin`);
+            });
+            
+            // Обработчик завершения работы приложения
+            process.on('SIGINT', () => __awaiter(this, void 0, void 0, function* () {
+                logger_1.default.info('Получен сигнал SIGINT, завершаем работу приложения...');
+                logger_1.default.info('Отключение от базы данных');
+                yield (0, database_1.disconnectFromDatabase)();
+                process.exit(0);
+            }));
+            
+            process.on('SIGTERM', () => __awaiter(this, void 0, void 0, function* () {
+                logger_1.default.info('Получен сигнал SIGTERM, завершаем работу приложения...');
+                logger_1.default.info('Отключение от базы данных');
+                yield (0, database_1.disconnectFromDatabase)();
+                process.exit(0);
+            }));
+        }
+        catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            logger_1.default.error(`Ошибка при запуске приложения: ${errorMessage}`);
+            if (error instanceof Error && error.stack) {
+                logger_1.default.error(`Стек ошибки: ${error.stack}`);
+            }
+            process.exit(1);
+        }
+    });
+}
+// Запускаем приложение
+database_1.connectToDatabase()
+    .then(() => {
+        logger_1.default.info('Успешное подключение к базе данных');
+        return startApp();
+    })
+    .catch(error => {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger_1.default.error(`Ошибка при подключении к базе данных: ${errorMessage}`);
+        if (error instanceof Error && error.stack) {
+            logger_1.default.error(`Стек ошибки: ${error.stack}`);
+        }
+        process.exit(1);
+    });
+//# sourceMappingURL=index.js.map

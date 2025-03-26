@@ -1,0 +1,181 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Модель пользователя
+model User {
+  id             Int           @id @default(autoincrement())
+  telegramId     BigInt        @unique // Telegram user ID
+  username       String?       // Telegram username (может быть null)
+  firstName      String
+  lastName       String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  isActive       Boolean       @default(true)
+  isAdmin        Boolean       @default(false)
+  language       String        @default("ru")
+  referralCode   String?       @unique // Реферальный код пользователя
+  referrerId     Int?          // ID пользователя, который пригласил
+  referrer       User?         @relation("UserReferrals", fields: [referrerId], references: [id])
+  referrals      User[]        @relation("UserReferrals")
+  referralBonus  Int           @default(0) // Бонус в днях за приглашенных пользователей
+  subscriptions  Subscription[]
+  payments       Payment[]
+}
+
+// Модель сервера VPN
+model VpnServer {
+  id                Int           @id @default(autoincrement())
+  name              String        // Название сервера (например, "Amsterdam-1")
+  host              String        // IP-адрес или доменное имя
+  port              Int           // SSH порт
+  location          String        // Географическое расположение
+  provider          String        // Провайдер сервера (например, "DigitalOcean")
+  isActive          Boolean       @default(true)
+  maxClients        Int           @default(50) // Максимальное количество одновременных подключений
+  currentClients    Int           @default(0)  // Текущее количество подключений
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  subscriptions     Subscription[]
+}
+
+// Модель подписки
+model Subscription {
+  id                Int           @id @default(autoincrement())
+  userId            Int
+  vpnServerId       Int
+  status            SubscriptionStatus
+  startDate         DateTime
+  endDate           DateTime
+  autoRenewal       Boolean       @default(false)
+  renewalPaymentId  String?       // ID платежа для автопродления
+  lastReminderSent  DateTime?     // Когда было отправлено последнее напоминание
+  reminderStatus    ReminderStatus? // Статус напоминаний
+  autoRenewalFailed Boolean       @default(false) // Флаг неудачного автопродления
+  downloadSpeed     Int           @default(10) // скорость скачивания в Mbps
+  uploadSpeed       Int           @default(10) // скорость загрузки в Mbps
+  torrentsAllowed   Boolean       @default(false) // разрешены ли торренты
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  vpnConfig         String?       // конфигурация VPN клиента
+  fromReferral      Boolean       @default(false) // получена ли по реферальной программе
+  user              User          @relation(fields: [userId], references: [id])
+  vpnServer         VpnServer     @relation(fields: [vpnServerId], references: [id])
+  payments          Payment[]
+}
+
+// Статус подписки
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  PENDING
+  CANCELLED
+}
+
+// Статус напоминаний о продлении
+enum ReminderStatus {
+  NONE              // Напоминания не отправлялись
+  FIRST_SENT        // Отправлено первое напоминание
+  SECOND_SENT       // Отправлено второе напоминание
+  FINAL_SENT        // Отправлено финальное напоминание
+}
+
+// Модель платежа
+model Payment {
+  id                String        @id // ID платежа из системы ЮKassa
+  userId            Int
+  subscriptionId    Int?
+  amount            Float
+  currency          String        @default("RUB")
+  status            PaymentStatus
+  paymentMethod     String?       // Метод оплаты
+  description       String?       // Описание платежа
+  createdAt         DateTime      @default(now())
+  confirmedAt       DateTime?     // Время подтверждения платежа
+  expiresAt         DateTime?     // Время истечения платежа
+  user              User          @relation(fields: [userId], references: [id])
+  subscription      Subscription? @relation(fields: [subscriptionId], references: [id])
+}
+
+// Статус платежа
+enum PaymentStatus {
+  PENDING
+  WAITING_FOR_CAPTURE
+  SUCCEEDED
+  CANCELED
+  FAILED
+}
+
+// Модель с настройками системы
+model Setting {
+  id                Int           @id @default(autoincrement())
+  key               String        @unique
+  value             String
+  description       String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+}
+
+// Модель реферальной программы
+model ReferralProgram {
+  id                Int           @id @default(autoincrement())
+  name              String
+  bonusType         BonusType
+  bonusValue        Int           // Значение бонуса (дни подписки или скидка в %)
+  isActive          Boolean       @default(true)
+  startDate         DateTime      @default(now())
+  endDate           DateTime?     // Дата окончания программы (если null, то бессрочно)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+}
+
+// Тип бонуса в реферальной программе
+enum BonusType {
+  DAYS              // Дополнительные дни подписки
+  DISCOUNT          // Скидка в процентах
+}
+
+// Модель FAQ (часто задаваемые вопросы)
+model FaqItem {
+  id                Int           @id @default(autoincrement())
+  question         String        // Вопрос
+  answer           String        // Ответ
+  category         String        // Категория вопроса (например, "Оплата", "Установка")
+  orderIndex       Int           @default(0) // Индекс для сортировки
+  isActive         Boolean       @default(true)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+}
+
+// Модель подарочной подписки
+model GiftSubscription {
+  id                Int           @id @default(autoincrement())
+  senderId          Int           // ID пользователя, который дарит подписку
+  recipientId       Int           // ID пользователя, которому дарят подписку
+  period            String        // Период подписки (monthly, quarterly, annual)
+  status            GiftStatus    // Статус подарка
+  paymentId         String?       // ID платежа
+  subscriptionId    Int?          // ID созданной подписки
+  createdAt         DateTime      @default(now())
+  redeemedAt        DateTime?     // Когда подписка была активирована получателем
+}
+
+// Статус подарочной подписки
+enum GiftStatus {
+  PENDING     // Ожидает оплаты
+  PAID        // Оплачена, но не активирована
+  REDEEMED    // Активирована получателем
+  EXPIRED     // Истек срок активации
+  CANCELLED   // Отменена
+}

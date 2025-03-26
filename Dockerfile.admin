@@ -1,0 +1,35 @@
+FROM node:18-alpine as builder
+
+WORKDIR /app
+
+# Устанавливаем необходимые зависимости
+RUN apk add --no-cache libc6-compat
+
+# Копируем package.json и package-lock.json
+COPY package*.json ./
+
+# Устанавливаем зависимости
+RUN npm install
+
+# Копируем исходный код
+COPY . .
+
+# Собираем проект с помощью скрипта для админ-панели
+RUN npm run build:admin
+
+# Этап для запуска с использованием nginx
+FROM nginx:alpine
+
+# Копируем собранные статические файлы в nginx
+# Путь определяется из vite.config.ts - outDir: resolve(__dirname, 'dist/admin')
+COPY --from=builder /app/dist/admin /usr/share/nginx/html
+
+# Копируем конфигурацию nginx
+RUN rm /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/conf.d/
+
+# Открываем порт
+EXPOSE 80
+
+# Запускаем nginx
+CMD ["nginx", "-g", "daemon off;"] 
