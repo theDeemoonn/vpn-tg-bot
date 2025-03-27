@@ -18,7 +18,7 @@ export const handleFaq = (bot: TelegramBot) => async (msg: TelegramBot.Message) 
       return;
     }
     
-    if (categoriesResult.data.length === 0) {
+    if (categoriesResult.data?.length === 0) {
       await bot.sendMessage(chatId, '🔍 В настоящее время FAQ раздел пуст. Пожалуйста, обратитесь в поддержку для получения помощи.');
       return;
     }
@@ -30,7 +30,7 @@ export const handleFaq = (bot: TelegramBot) => async (msg: TelegramBot.Message) 
     keyboard.push([{ text: '🔍 Поиск по FAQ', callback_data: 'faq_search' }]);
     
     // Добавляем категории
-    categoriesResult.data.forEach(category => {
+    categoriesResult.data?.forEach(category => {
       keyboard.push([{ text: category, callback_data: `faq_category_${category}` }]);
     });
     
@@ -48,7 +48,7 @@ export const handleFaq = (bot: TelegramBot) => async (msg: TelegramBot.Message) 
         },
       }
     );
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Ошибка при обработке команды /faq: ${error.message}`);
     await bot.sendMessage(chatId, '❌ Произошла ошибка. Пожалуйста, попробуйте позже.');
   }
@@ -66,7 +66,7 @@ export async function handleFaqCategory(
   try {
     const faqResult = await faqService.getFaqByCategory(category);
     
-    if (!faqResult.success || faqResult.data.length === 0) {
+    if (!faqResult.success || faqResult?.data?.length === 0) {
       await bot.editMessageText(
         '❌ В данной категории нет доступных вопросов.',
         {
@@ -85,7 +85,7 @@ export async function handleFaqCategory(
     // Создаем клавиатуру с вопросами
     const keyboard: TelegramBot.InlineKeyboardButton[][] = [];
     
-    faqResult.data.forEach(item => {
+    faqResult.data?.forEach(item => {
       keyboard.push([{ text: item.question, callback_data: `faq_item_${item.id}` }]);
     });
     
@@ -102,7 +102,7 @@ export async function handleFaqCategory(
         },
       }
     );
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Ошибка при отображении FAQ категории: ${error.message}`);
     await bot.sendMessage(chatId, '❌ Произошла ошибка. Пожалуйста, попробуйте позже.');
   }
@@ -152,7 +152,7 @@ export async function handleFaqItem(
         },
       }
     );
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Ошибка при отображении ответа на вопрос: ${error.message}`);
     await bot.sendMessage(chatId, '❌ Произошла ошибка. Пожалуйста, попробуйте позже.');
   }
@@ -180,7 +180,7 @@ export async function handleFaqSearch(
         },
       }
     );
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Ошибка при активации режима поиска: ${error.message}`);
     await bot.sendMessage(chatId, '❌ Произошла ошибка. Пожалуйста, попробуйте позже.');
   }
@@ -211,7 +211,7 @@ export const handleFaqSearchQuery = (bot: TelegramBot) => async (msg: TelegramBo
     // Выполняем поиск
     const searchResult = await faqService.searchFaq(query);
     
-    if (!searchResult.success || searchResult.data.length === 0) {
+    if (!searchResult.success || searchResult.data?.length === 0) {
       await bot.sendMessage(
         chatId,
         `🔍 По запросу "${query}" ничего не найдено.\n\nПопробуйте изменить запрос или выбрать категорию:`,
@@ -229,7 +229,7 @@ export const handleFaqSearchQuery = (bot: TelegramBot) => async (msg: TelegramBo
     // Создаем клавиатуру с результатами поиска
     const keyboard: TelegramBot.InlineKeyboardButton[][] = [];
     
-    searchResult.data.forEach(item => {
+    searchResult.data?.forEach(item => {
       keyboard.push([{ text: item.question, callback_data: `faq_item_${item.id}` }]);
     });
     
@@ -244,7 +244,7 @@ export const handleFaqSearchQuery = (bot: TelegramBot) => async (msg: TelegramBo
         },
       }
     );
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Ошибка при выполнении поиска по FAQ: ${error.message}`);
     await bot.sendMessage(chatId, '❌ Произошла ошибка. Пожалуйста, попробуйте позже.');
   }

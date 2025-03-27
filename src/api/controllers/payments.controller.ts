@@ -71,7 +71,7 @@ export const getPaymentById = async (req: Request, res: Response) => {
     const paymentId = parseInt(req.params.id);
 
     const payment = await prisma.payment.findUnique({
-      where: { id: paymentId },
+      where: { id: paymentId.toString() },
       include: {
         user: true,
         subscription: {

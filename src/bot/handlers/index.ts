@@ -8,7 +8,7 @@ import { handleProfile } from './profile';
 import { handleBuy } from './buy';
 import { handleAdmin } from './admin';
 import { handleReferral } from './referral';
-import { handleCallbackQuery } from './callback';
+import { handleCallbackQuery, handlePreCheckoutQuery, handleSuccessfulPayment } from './callback';
 import { handleMessage } from './message';
 import { handleFaq, handleFaqSearchQuery } from './faq';
 
@@ -34,6 +34,10 @@ export function registerHandlers(bot: TelegramBot): void {
   
   // Обработчик callback запросов (для инлайн кнопок)
   bot.on('callback_query', handleCallbackQuery(bot));
+  
+  // Обработчики для Telegram Payments (ЮKassa)
+  bot.on('pre_checkout_query', handlePreCheckoutQuery(bot));
+  bot.on('successful_payment', handleSuccessfulPayment(bot));
   
   // Обработчик текстовых сообщений - используем правильный тип события
   bot.on('message', handleMessage(bot));

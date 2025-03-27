@@ -30,7 +30,7 @@ export async function generateQRCode(text: string): Promise<Buffer> {
 
     // Генерируем QR-код в виде буфера
     return await QRCode.toBuffer(text, options);
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Ошибка при генерации QR-кода: ${error.message}`);
     throw new Error(`Не удалось сгенерировать QR-код: ${error.message}`);
   }
@@ -64,7 +64,7 @@ export async function generateVpnConfigQrCode(
     fs.writeFileSync(filePath, qrBuffer);
 
     return filePath;
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Ошибка при генерации QR-кода для VPN: ${error.message}`);
     throw new Error(`Не удалось сгенерировать QR-код для VPN: ${error.message}`);
   }
@@ -80,7 +80,7 @@ export function removeQrCodeFile(filePath: string): void {
       fs.unlinkSync(filePath);
       logger.info(`Временный QR-код удален: ${filePath}`);
     }
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Ошибка при удалении QR-кода: ${error.message}`);
   }
 } 

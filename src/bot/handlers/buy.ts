@@ -81,7 +81,8 @@ export async function handleSelectPaymentMethod(
   bot: TelegramBot,
   chatId: number,
   messageId: number,
-  period: SubscriptionPeriod
+  period: SubscriptionPeriod,
+  subscriptionId?: number
 ): Promise<void> {
   try {
     // Находим пользователя
@@ -107,27 +108,34 @@ export async function handleSelectPaymentMethod(
 
 Тариф: ${periodName}
 Сумма: ${amount} ₽
+${subscriptionId ? 'Продление подписки' : 'Новая подписка'}
 
 Выберите удобный способ оплаты:
     `;
     
+    // Формируем callback data с учетом ID подписки, если есть
+    const periodStr = period.toString();
+    const subscriptionSuffix = subscriptionId ? `_${subscriptionId}` : '';
+    
     // Подготавливаем клавиатуру с доступными способами оплаты
     const keyboard: TelegramBot.InlineKeyboardButton[][] = [
-      [{ text: '💳 Банковская карта', callback_data: `pay_card_${period}` }]
+      [{ text: '💳 Оплата банковской картой', callback_data: `pay_card_${periodStr}${subscriptionSuffix}` }]
     ];
     
-    // Добавляем кнопку Telegram Payments, если включена
-    if (config.enableTelegramPayments && 
-        config.telegramPaymentToken && 
-        config.telegramPaymentToken.trim() !== '') {
-      keyboard.push([{ text: '📱 Telegram Payments', callback_data: `pay_telegram_${period}` }]);
-      logger.info('Добавлена кнопка оплаты через Telegram Payments');
+    // Добавляем кнопку оплаты через Telegram
+    // Проверяем наличие токена ЮKassa для Telegram
+    if (config.telegramPaymentToken && config.telegramPaymentToken.trim() !== '') {
+      keyboard.push([{ 
+        text: '📱 Оплата через Telegram', 
+        callback_data: `pay_telegram_${periodStr}${subscriptionSuffix}` 
+      }]);
+      logger.info('Добавлена кнопка оплаты через Telegram');
     }
     
     // Добавляем кнопку "Назад"
-    keyboard.push([{ text: '⬅️ Назад', callback_data: 'buy' }]);
+    keyboard.push([{ text: '🔙 Назад к тарифам', callback_data: subscriptionId ? `renew_subscription_${subscriptionId}` : 'buy' }]);
     
-    // Отправляем сообщение с выбором способа оплаты
+    // Отправляем сообщение с выбором метода оплаты
     await bot.editMessageText(message, {
       chat_id: chatId,
       message_id: messageId,
@@ -136,6 +144,12 @@ export async function handleSelectPaymentMethod(
         inline_keyboard: keyboard
       }
     });
+    
+    // Очищаем состояние
+    if (global.userStates && global.userStates[chatId]) {
+      delete global.userStates[chatId];
+    }
+    
   } catch (error: any) {
     logger.error(`Ошибка при выборе метода оплаты: ${error.message}`);
     await bot.sendMessage(chatId, 'Произошла ошибка. Пожалуйста, попробуйте позже.');
@@ -260,16 +274,13 @@ export async function handleSelectGiftPaymentMethod(
       where: { telegramId: BigInt(chatId) }
     });
     
-    if (!sender) {
-      await bot.sendMessage(chatId, 'Пожалуйста, используйте /start для начала работы с ботом.');
-      return;
-    }
-    
     // Находим пользователя-получателя
-    const recipient = await findRecipientUser(recipientId);
+    const recipient = await prisma.user.findUnique({
+      where: { telegramId: BigInt(recipientId) }
+    });
     
-    if (!recipient) {
-      await bot.sendMessage(chatId, '❌ Получатель не найден. Убедитесь, что указанный пользователь зарегистрирован в боте.');
+    if (!sender || !recipient) {
+      await bot.sendMessage(chatId, 'Пользователь не найден. Пожалуйста, попробуйте снова.');
       return;
     }
     
@@ -281,23 +292,27 @@ export async function handleSelectGiftPaymentMethod(
         ? 'Квартальный' 
         : 'Годовой';
     
-    let recipientName = recipient.username || recipient.firstName || recipient.telegramId.toString();
-    if (recipient.username) recipientName = '@' + recipient.username;
+    const recipientName = recipient.username 
+      ? '@' + recipient.username 
+      : recipient.firstName || recipient.telegramId.toString();
     
     const message = `
-🎁 *Подарить подписку*
+💳 *Выберите способ оплаты подарочной подписки*
 
 Получатель: ${recipientName}
 Тариф: ${periodName}
 Сумма: ${amount} ₽
 
-Выберите способ оплаты:
+Выберите удобный способ оплаты:
     `;
     
     // Подготавливаем клавиатуру с доступными способами оплаты
     const keyboard: TelegramBot.InlineKeyboardButton[][] = [
       [{ text: '💳 Банковская карта', callback_data: `gift_pay_card_${period}_${recipient.telegramId}` }]
     ];
+    
+    // Добавляем кнопку ЮKassa в Telegram
+    keyboard.push([{ text: '💰 ЮKassa в Telegram', callback_data: `gift_pay_yookassa_telegram_${period}_${recipient.telegramId}` }]);
     
     // Добавляем кнопку Telegram Payments, если включена
     if (config.enableTelegramPayments && 

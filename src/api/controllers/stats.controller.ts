@@ -1,3 +1,4 @@
+import { PaymentStatus } from "@prisma/client";
 import { Request, Response } from 'express';
 import { prisma } from '../../services/database';
 import logger from '../../utils/logger';
@@ -26,7 +27,7 @@ export const getDashboardStats = async (req: Request, res: Response) => {
     // Получаем общую сумму подтвержденных платежей (выручка)
     const paymentsTotal = await prisma.payment.aggregate({
       _sum: { amount: true },
-      where: { status: 'CONFIRMED' }
+      where: { status: PaymentStatus.SUCCEEDED}
     });
     const totalRevenue = paymentsTotal._sum.amount || 0;
     
@@ -36,7 +37,7 @@ export const getDashboardStats = async (req: Request, res: Response) => {
     const paymentsCurrentMonth = await prisma.payment.aggregate({
       _sum: { amount: true },
       where: {
-        status: 'CONFIRMED',
+        status: PaymentStatus.SUCCEEDED,
         confirmedAt: {
           gte: startOfMonth
         }

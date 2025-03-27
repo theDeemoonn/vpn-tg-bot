@@ -16,7 +16,7 @@ export const getServers = async (req: Request, res: Response) => {
       servers.map(async (server) => {
         const activeUsers = await prisma.subscription.count({
           where: {
-            serverId: server.id,
+            vpnServerId: server.id,
             status: 'ACTIVE'
           }
         });
@@ -53,7 +53,7 @@ export const getServerById = async (req: Request, res: Response) => {
     // Получаем количество активных пользователей
     const activeUsers = await prisma.subscription.count({
       where: {
-        serverId,
+        vpnServerId: serverId,
         status: 'ACTIVE'
       }
     });
@@ -86,6 +86,9 @@ export const createServer = async (req: Request, res: Response) => {
         message: 'Необходимо указать название, хост и порт сервера' 
       });
     }
+
+    const location = req.body.location;
+    const provider = req.body.provider;
     
     // Создаем новый сервер
     const server = await prisma.vpnServer.create({
@@ -93,7 +96,9 @@ export const createServer = async (req: Request, res: Response) => {
         name,
         host,
         port: parseInt(port),
-        maxUsers: maxUsers ? parseInt(maxUsers) : 100,
+        location,
+        provider,
+        maxClients: maxUsers ? parseInt(maxUsers) : 100,
         isActive: typeof isActive === 'boolean' ? isActive : true
       }
     });
@@ -129,7 +134,7 @@ export const updateServer = async (req: Request, res: Response) => {
         name: name !== undefined ? name : undefined,
         host: host !== undefined ? host : undefined,
         port: port !== undefined ? parseInt(port) : undefined,
-        maxUsers: maxUsers !== undefined ? parseInt(maxUsers) : undefined,
+        maxClients: maxUsers !== undefined ? parseInt(maxUsers) : undefined,
         isActive: isActive !== undefined ? isActive : undefined
       }
     });
@@ -160,7 +165,7 @@ export const deleteServer = async (req: Request, res: Response) => {
     // Проверяем, есть ли активные подписки на этот сервер
     const activeSubscriptions = await prisma.subscription.count({
       where: {
-        serverId,
+        vpnServerId: serverId,
         status: 'ACTIVE'
       }
     });

@@ -125,7 +125,7 @@ const Users: React.FC = () => {
     
     const { page: currentPage, totalPages } = usersData;
     
-    const pages = [];
+    const pages: JSX.Element[] = [];
     for (let i = 1; i <= totalPages; i++) {
       pages.push(
         <button

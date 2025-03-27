@@ -87,7 +87,7 @@ const Payments: React.FC = () => {
 
   // Рендер пагинации
   const renderPagination = () => {
-    const pages = [];
+    const pages: JSX.Element[] = [];
     for (let i = 1; i <= totalPages; i++) {
       pages.push(
         <button

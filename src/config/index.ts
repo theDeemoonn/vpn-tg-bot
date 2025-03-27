@@ -8,6 +8,7 @@ dotenv.config();
 interface Config {
   // Telegram Bot
   telegramBotToken: string;
+  telegramBotUsername: string;
   adminChatId: string;
   
   // Database
@@ -67,6 +68,7 @@ for (const envVar of requiredEnvVars) {
 const config: Config = {
   // Telegram Bot
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN!,
+  telegramBotUsername: process.env.TELEGRAM_BOT_USERNAME || '',
   adminChatId: process.env.ADMIN_CHAT_ID || '',
   
   // Database
@@ -102,7 +104,7 @@ const config: Config = {
   // Payment Systems
   enableTelegramPayments: process.env.ENABLE_TELEGRAM_PAYMENTS === 'true',
   telegramPaymentToken: process.env.TELEGRAM_PAYMENT_TOKEN || '',
-  paymentReturnUrl: process.env.PAYMENT_RETURN_URL || `http://${process.env.HOST || 'localhost'}:${process.env.PORT || '3000'}/payment/callback`,
+  paymentReturnUrl: process.env.PAYMENT_RETURN_URL || 'http://localhost:3000/payment/return',
   
   // QR Code Settings
   qrCodeSize: parseInt(process.env.QR_CODE_SIZE || '300', 10)

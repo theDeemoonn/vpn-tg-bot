@@ -30,7 +30,7 @@ export async function getAllFaqGroupedByCategory() {
     }, {});
 
     return { success: true, data: groupedFaq };
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Ошибка при получении FAQ: ${error.message}`);
     return { success: false, error: error.message };
   }
@@ -68,7 +68,7 @@ export async function searchFaq(query: string) {
     });
 
     return { success: true, data: faqItems };
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Ошибка при поиске по FAQ: ${error.message}`);
     return { success: false, error: error.message };
   }
@@ -90,7 +90,7 @@ export async function getFaqByCategory(category: string) {
     });
 
     return { success: true, data: faqItems };
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Ошибка при получении FAQ по категории: ${error.message}`);
     return { success: false, error: error.message };
   }
@@ -115,7 +115,7 @@ export async function getAllFaqCategories() {
     });
 
     return { success: true, data: categories.map(c => c.category) };
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Ошибка при получении категорий FAQ: ${error.message}`);
     return { success: false, error: error.message };
   }
@@ -136,7 +136,7 @@ export async function createFaqItem(data: {
     });
 
     return { success: true, data: faqItem };
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Ошибка при создании FAQ: ${error.message}`);
     return { success: false, error: error.message };
   }
@@ -162,7 +162,7 @@ export async function updateFaqItem(
     });
 
     return { success: true, data: faqItem };
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Ошибка при обновлении FAQ (ID: ${id}): ${error.message}`);
     return { success: false, error: error.message };
   }
@@ -178,7 +178,7 @@ export async function deleteFaqItem(id: number) {
     });
 
     return { success: true };
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Ошибка при удалении FAQ (ID: ${id}): ${error.message}`);
     return { success: false, error: error.message };
   }
