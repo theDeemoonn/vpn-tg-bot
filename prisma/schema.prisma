@@ -93,19 +93,24 @@ enum ReminderStatus {
 
 // Модель платежа
 model Payment {
-  id                String        @id // ID платежа из системы ЮKassa
-  userId            Int
-  subscriptionId    Int?
-  amount            Float
-  currency          String        @default("RUB")
-  status            PaymentStatus
-  paymentMethod     String?       // Метод оплаты
-  description       String?       // Описание платежа
-  createdAt         DateTime      @default(now())
-  confirmedAt       DateTime?     // Время подтверждения платежа
-  expiresAt         DateTime?     // Время истечения платежа
-  user              User          @relation(fields: [userId], references: [id])
-  subscription      Subscription? @relation(fields: [subscriptionId], references: [id])
+  id              String          @id
+  userId          Int
+  subscriptionId  Int?
+  amount          Float
+  currency        String
+  status          PaymentStatus   @default(PENDING)
+  paymentMethod   String          @default("UNKNOWN")
+  description     String?
+  createdAt       DateTime        @default(now())
+  confirmedAt     DateTime?
+  expiresAt       DateTime?
+  json_data       Json?
+  
+  user            User            @relation(fields: [userId], references: [id])
+  subscription    Subscription?   @relation(fields: [subscriptionId], references: [id])
+  invoiceData     PaymentInvoiceData?
+
+  @@map("Payment")
 }
 
 // Статус платежа
@@ -178,4 +183,33 @@ enum GiftStatus {
   REDEEMED    // Активирована получателем
   EXPIRED     // Истек срок активации
   CANCELLED   // Отменена
+}
+
+// Модель для хранения данных инвойса платежа
+model PaymentInvoiceData {
+  id          String   @id @default(uuid())
+  payment_id  String   @unique
+  title       String
+  description String
+  payload     String
+  currency    String
+  prices      String   @db.Text
+  options     String   @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  payment     Payment? @relation(fields: [payment_id], references: [id])
+
+  @@map("PaymentInvoiceData")
+}
+
+// Модель для логирования платежей
+model PaymentLog {
+  id          String   @id @default(uuid())
+  paymentId   String
+  type        String
+  data        String   @db.Text
+  createdAt   DateTime @default(now())
+
+  @@map("PaymentLog")
 }

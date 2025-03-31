@@ -5,7 +5,15 @@ import { registerHandlers } from './handlers';
 import { connectToDatabase } from '../services/database';
 
 // Инициализация бота
-const bot = new TelegramBot(config.telegramBotToken, { polling: true });
+const bot = new TelegramBot(config.telegramBotToken, { 
+  polling: {
+    interval: 300,
+    autoStart: true,
+    params: {
+      timeout: 10
+    }
+  }
+});
 
 // Экспортируем бот по умолчанию
 export default bot;

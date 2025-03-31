@@ -1,4 +1,8 @@
-export const handleStart: CommandHandler = (bot: TelegramBot) => async (msg: TelegramBot.Message, match: RegExpExecArray | null): Promise<void> => {
+import TelegramBot from "node-telegram-bot-api";
+import { prisma } from "../../services/database";
+import logger from "../../utils/logger";
+
+export const handleStart = (bot: TelegramBot) => async (msg: TelegramBot.Message, match: RegExpExecArray | null): Promise<void> => {
   try {
     const chatId = msg.chat.id;
     const userId = msg.from?.id;

@@ -1,7 +1,7 @@
 import { prisma } from './database';
-import { checkPaymentStatus } from './payment';
 import config from '../config';
 import logger from '../utils/logger';
+import { checkYookassaPaymentStatus } from "./yookassaTelegramPayments";
 
 /**
  * Сервис для периодической проверки статусов платежей в ЮKassa
@@ -126,13 +126,14 @@ async function checkPendingPayments() {
     for (const payment of yookassaPayments) {
       try {
         logger.info(`Проверка статуса платежа ЮKassa: ${payment.id}`);
-        const status = await checkPaymentStatus(payment.id);
+        const status = await checkYookassaPaymentStatus(payment.id);
         logger.info(`Обновлен статус платежа ${payment.id}: ${status}`);
       } catch (error) {
         logger.error(`Ошибка при проверке статуса платежа ${payment.id}: ${error}`);
         
         // Если ошибка связана с отсутствием платежа (404), отмечаем его как FAILED
-        if (error.toString().includes('404') || error.toString().includes('Not Found')) {
+        if (typeof error === 'object' && error !== null && 'toString' in error &&
+            (error.toString().includes('404') || error.toString().includes('Not Found'))) {
           try {
             await prisma.payment.update({
               where: { id: payment.id },

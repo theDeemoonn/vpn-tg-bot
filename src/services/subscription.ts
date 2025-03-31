@@ -1,7 +1,6 @@
-import { PrismaClient, Subscription, SubscriptionStatus, ReminderStatus, Payment, PaymentStatus } from '@prisma/client';
+import {  Subscription, SubscriptionStatus, ReminderStatus,  PaymentStatus } from '@prisma/client';
 import { logger } from '../utils/logger';
 import * as paymentService from './payment';
-import * as userService from './user';
 import bot from '../bot';
 import { prisma } from './database';
 

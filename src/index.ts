@@ -9,7 +9,6 @@ import * as subscriptionService from './services/subscription';
 import TelegramBot from 'node-telegram-bot-api';
 import bot, { startBot } from './bot';
 import { prisma } from './services/database';
-import { handleSuccessfulTelegramPayment } from './services/telegramPayments';
 import { validateYookassaWebhook } from './middlewares/yookassaWebhookAuth';
 import { startPaymentChecker } from './services/paymentChecker';
 import path from 'path';

@@ -1,7 +1,6 @@
 import TelegramBot, { Message } from 'node-telegram-bot-api';
 import { prisma } from '../../services/database';
-import { createPayment, getPaymentAmount, SubscriptionPeriod } from '../../services/payment';
-import { createTelegramInvoice } from '../../services/telegramPayments';
+import {  getPaymentAmount, SubscriptionPeriod } from '../../services/payment';
 import config from '../../config';
 import logger from '../../utils/logger';
 import { MessageHandler } from './types';
@@ -117,19 +116,35 @@ ${subscriptionId ? 'Продление подписки' : 'Новая подп�
     const periodStr = period.toString();
     const subscriptionSuffix = subscriptionId ? `_${subscriptionId}` : '';
     
-    // Подготавливаем клавиатуру с доступными способами оплаты
-    const keyboard: TelegramBot.InlineKeyboardButton[][] = [
-      [{ text: '💳 Оплата банковской картой', callback_data: `pay_card_${periodStr}${subscriptionSuffix}` }]
-    ];
+    // Упрощённая клавиатура с единой кнопкой оплаты через Telegram
+    const keyboard: TelegramBot.InlineKeyboardButton[][] = [];
     
-    // Добавляем кнопку оплаты через Telegram
-    // Проверяем наличие токена ЮKassa для Telegram
-    if (config.telegramPaymentToken && config.telegramPaymentToken.trim() !== '') {
+    // Проверяем наличие интеграции ЮKassa через Telegram
+    if (config.yookassaTelegramEnabled) {
       keyboard.push([{ 
-        text: '📱 Оплата через Telegram', 
+        text: '💳 Оплатить через Telegram', 
         callback_data: `pay_telegram_${periodStr}${subscriptionSuffix}` 
       }]);
-      logger.info('Добавлена кнопка оплаты через Telegram');
+      
+      logger.info('Добавлена кнопка оплаты через ЮKassa в Telegram');
+    } else if (config.telegramPaymentToken && config.telegramPaymentToken.trim() !== '') {
+      // Альтернативная интеграция с Telegram Payments (если включена)
+      keyboard.push([{ 
+        text: '💳 Оплатить через Telegram', 
+        callback_data: `pay_telegram_direct_${periodStr}${subscriptionSuffix}` 
+      }]);
+      
+      logger.info('Добавлена кнопка прямой оплаты через Telegram');
+    }
+    
+    // Веб-ссылка для оплаты через страницу ЮKassa (если первые два варианта недоступны)
+    if (keyboard.length === 0) {
+      keyboard.push([{ 
+        text: '💳 Оплатить банковской картой', 
+        callback_data: `pay_card_${periodStr}${subscriptionSuffix}` 
+      }]);
+      
+      logger.info('Добавлена кнопка оплаты через веб-страницу');
     }
     
     // Добавляем кнопку "Назад"
@@ -248,10 +263,9 @@ export async function handleRequestGiftRecipient(
     // Сохраняем состояние в глобальном объекте
     global.userStates = global.userStates || {};
     global.userStates[chatId] = {
-      state: 'WAITING_FOR_GIFT_RECIPIENT',
-      data: { period }
+      state: 'waiting_for_gift_recipient',
+      period: period
     };
-    
   } catch (error: any) {
     logger.error(`Ошибка при запросе получателя подарка: ${error.message}`);
     await bot.sendMessage(chatId, 'Произошла ошибка. Пожалуйста, попробуйте позже.');
@@ -274,57 +288,93 @@ export async function handleSelectGiftPaymentMethod(
       where: { telegramId: BigInt(chatId) }
     });
     
-    // Находим пользователя-получателя
-    const recipient = await prisma.user.findUnique({
-      where: { telegramId: BigInt(recipientId) }
-    });
-    
-    if (!sender || !recipient) {
-      await bot.sendMessage(chatId, 'Пользователь не найден. Пожалуйста, попробуйте снова.');
+    if (!sender) {
+      await bot.sendMessage(chatId, 'Пожалуйста, используйте /start для начала работы с ботом.');
       return;
     }
+
+    // Находим пользователя-получателя
+    const recipient = await findRecipientUser(recipientId);
     
+    if (!recipient) {
+      await bot.editMessageText(
+        `❌ Получатель не найден. Пожалуйста, проверьте правильность введенного ID или убедитесь, что получатель уже зарегистрирован в боте.`,
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '⬅️ Назад', callback_data: `gift_${period}` }]
+            ]
+          }
+        }
+      );
+      return;
+    }
+
+    // Создаем запись о подарочной подписке
+    const giftSubscription = await prisma.giftSubscription.create({
+      data: {
+        senderId: sender.id,
+        recipientId: recipient.id,
+        status: 'PENDING',
+        period: period
+      }
+    });
+
     // Формируем сообщение с выбором способа оплаты
     const amount = getPaymentAmount(period);
-    const periodName = period === SubscriptionPeriod.MONTHLY 
-      ? 'Месячный' 
-      : period === SubscriptionPeriod.QUARTERLY 
-        ? 'Квартальный' 
-        : 'Годовой';
-    
-    const recipientName = recipient.username 
-      ? '@' + recipient.username 
-      : recipient.firstName || recipient.telegramId.toString();
-    
+    const periodName = period === SubscriptionPeriod.MONTHLY
+      ? 'месячный'
+      : period === SubscriptionPeriod.QUARTERLY
+        ? 'квартальный'
+        : 'годовой';
+
+    const recipientName = recipient.username
+      ? '@' + recipient.username
+      : recipient.firstName
+        ? recipient.firstName
+        : 'ID: ' + recipient.telegramId.toString();
+
     const message = `
-💳 *Выберите способ оплаты подарочной подписки*
+🎁 *Подарочная подписка*
 
 Получатель: ${recipientName}
 Тариф: ${periodName}
 Сумма: ${amount} ₽
 
-Выберите удобный способ оплаты:
+Выберите способ оплаты:
     `;
+
+    // Клавиатура с выбором способа оплаты
+    const keyboard: TelegramBot.InlineKeyboardButton[][] = [];
     
-    // Подготавливаем клавиатуру с доступными способами оплаты
-    const keyboard: TelegramBot.InlineKeyboardButton[][] = [
-      [{ text: '💳 Банковская карта', callback_data: `gift_pay_card_${period}_${recipient.telegramId}` }]
-    ];
+    // Проверяем наличие интеграции ЮKassa через Telegram
+    if (config.yookassaTelegramEnabled) {
+      keyboard.push([{ 
+        text: '💳 Оплатить через Telegram', 
+        callback_data: `pay_gift_telegram_${giftSubscription.id}` 
+      }]);
+    } else if (config.telegramPaymentToken && config.telegramPaymentToken.trim() !== '') {
+      // Альтернативная интеграция с Telegram Payments
+      keyboard.push([{ 
+        text: '💳 Оплатить через Telegram', 
+        callback_data: `pay_gift_telegram_direct_${giftSubscription.id}` 
+      }]);
+    }
     
-    // Добавляем кнопку ЮKassa в Telegram
-    keyboard.push([{ text: '💰 ЮKassa в Telegram', callback_data: `gift_pay_yookassa_telegram_${period}_${recipient.telegramId}` }]);
-    
-    // Добавляем кнопку Telegram Payments, если включена
-    if (config.enableTelegramPayments && 
-        config.telegramPaymentToken && 
-        config.telegramPaymentToken.trim() !== '') {
-      keyboard.push([{ text: '📱 Telegram Payments', callback_data: `gift_pay_telegram_${period}_${recipient.telegramId}` }]);
+    // Веб-ссылка для оплаты через страницу ЮKassa
+    if (keyboard.length === 0) {
+      keyboard.push([{ 
+        text: '💳 Оплатить банковской картой', 
+        callback_data: `pay_gift_card_${giftSubscription.id}` 
+      }]);
     }
     
     // Добавляем кнопку "Назад"
     keyboard.push([{ text: '⬅️ Назад', callback_data: 'gift_subscription' }]);
     
-    // Отправляем сообщение с выбором способа оплаты
+    // Отправляем сообщение с выбором метода оплаты
     await bot.editMessageText(message, {
       chat_id: chatId,
       message_id: messageId,
@@ -334,41 +384,44 @@ export async function handleSelectGiftPaymentMethod(
       }
     });
     
-    // Очищаем состояние
+    // Сбрасываем состояние
     if (global.userStates && global.userStates[chatId]) {
       delete global.userStates[chatId];
     }
-    
   } catch (error: any) {
-    logger.error(`Ошибка при выборе метода оплаты подарка: ${error.message}`);
+    logger.error(`Ошибка при выборе метода оплаты подарочной подписки: ${error.message}`);
     await bot.sendMessage(chatId, 'Произошла ошибка. Пожалуйста, попробуйте позже.');
   }
 }
 
 /**
- * Вспомогательная функция для поиска пользователя по username или ID
+ * Поиск пользователя-получателя по ID или username
  */
 async function findRecipientUser(recipientId: string) {
-  let recipient;
-  
-  // Если строка начинается с @, ищем по username
-  if (recipientId.startsWith('@')) {
-    const username = recipientId.substring(1);
-    recipient = await prisma.user.findFirst({
-      where: { username }
-    });
-  } else {
-    // Пробуем найти по числовому ID
-    try {
-      const telegramId = BigInt(recipientId);
+  try {
+    let recipient;
+    
+    // Проверяем, является ли recipientId числом или строкой с @
+    if (/^\d+$/.test(recipientId)) {
+      // Если это число, ищем по telegramId
       recipient = await prisma.user.findUnique({
-        where: { telegramId }
+        where: { telegramId: BigInt(recipientId) }
       });
-    } catch (e) {
-      // Если не удалось преобразовать в число, возвращаем null
-      return null;
+    } else if (recipientId.startsWith('@')) {
+      // Если это @username, ищем по username без @
+      recipient = await prisma.user.findFirst({
+        where: { username: recipientId.substring(1) }
+      });
+    } else {
+      // В других случаях пробуем искать по username как есть
+      recipient = await prisma.user.findFirst({
+        where: { username: recipientId }
+      });
     }
+    
+    return recipient;
+  } catch (error) {
+    logger.error(`Ошибка при поиске получателя: ${error}`);
+    return null;
   }
-  
-  return recipient;
 } 

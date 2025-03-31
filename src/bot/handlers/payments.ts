@@ -121,7 +121,7 @@ export const handleSuccessfulPayment = (bot: TelegramBot) => async (msg: Telegra
     
     // Обрабатываем успешный платеж
     try {
-      await handleSuccessfulYookassaTelegramPayment(payment);
+      await handleSuccessfulYookassaTelegramPayment( payment);
       logger.info(`Успешно обработан платеж от пользователя ${chatId}`);
       
       // Отправляем сообщение об успешной активации

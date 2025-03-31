@@ -48,6 +48,15 @@ interface Config {
   
   // QR Code Settings
   qrCodeSize: number;
+  
+  // ЮKassa Telegram интеграция
+  yookassaTelegramEnabled: boolean;
+  yookassaTelegramWebhookUrl: string;
+  
+  // Fisсalization (чеки)
+  enableFiscalization: boolean;
+  fiscalizationDefaultEmail: string;
+  fiscalizationVatCode: string;
 }
 
 // Проверка наличия обязательных переменных окружения
@@ -107,7 +116,16 @@ const config: Config = {
   paymentReturnUrl: process.env.PAYMENT_RETURN_URL || 'http://localhost:3000/payment/return',
   
   // QR Code Settings
-  qrCodeSize: parseInt(process.env.QR_CODE_SIZE || '300', 10)
+  qrCodeSize: parseInt(process.env.QR_CODE_SIZE || '300', 10),
+  
+  // ЮKassa Telegram интеграция
+  yookassaTelegramEnabled: process.env.YOOKASSA_TELEGRAM_ENABLED === 'true',
+  yookassaTelegramWebhookUrl: process.env.YOOKASSA_TELEGRAM_WEBHOOK_URL || '',
+  
+  // Fiscalization (чеки)
+  enableFiscalization: process.env.ENABLE_FISCALIZATION === 'true',
+  fiscalizationDefaultEmail: process.env.FISCALIZATION_DEFAULT_EMAIL || 'client@example.com',
+  fiscalizationVatCode: process.env.FISCALIZATION_VAT_CODE || '1'
 };
 
 export default config; 

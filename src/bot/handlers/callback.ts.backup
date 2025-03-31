@@ -1,20 +1,14 @@
 import TelegramBot, { CallbackQuery, Message } from 'node-telegram-bot-api';
-import config from "../../config";
 import { prisma } from '../../services/database';
-import {
-  createPayment,
-  createTelegramDirectPayment,
-  getPaymentAmount,
-  getSubscriptionDuration,
-  SubscriptionPeriod
-} from '../../services/payment';
+import { createPayment, getPaymentAmount, getSubscriptionDuration, SubscriptionPeriod } from '../../services/payment';
 import { generateClientConfig } from '../../services/vpn';
-import { answerPreCheckoutQuery } from "../../services/yookassaTelegramPayments";
+import { createTelegramInvoice } from '../../services/telegramPayments';
+import { createYookassaTelegramPayment, answerPreCheckoutQuery, handleSuccessfulYookassaTelegramPayment } from '../../services/yookassaTelegramPayments';
 import logger from '../../utils/logger';
 import { CallbackQueryHandler } from './types';
 import { handleHelp } from './help';
 import { handleProfile } from './profile';
-import { handleBuy, handleGiftSubscription, handleRequestGiftRecipient, handleSelectPaymentMethod } from './buy';
+import { handleBuy, handleSelectPaymentMethod, handleGiftSubscription, handleRequestGiftRecipient } from './buy';
 import { handleReferral } from './referral';
 import { handleSubscription } from './subscription';
 import * as subscriptionService from '../../services/subscription';
@@ -362,8 +356,7 @@ export const handleCallbackQuery: CallbackQueryHandler = (bot: TelegramBot) => a
         // Находим подарочную подписку
         const giftSubscription = await prisma.giftSubscription.findUnique({
           where: { id: giftSubscriptionId },
-
-
+          include: { recipient: true }
         });
 
         if (!giftSubscription) {
@@ -407,7 +400,7 @@ export const handleCallbackQuery: CallbackQueryHandler = (bot: TelegramBot) => a
           {
             isGift: true,
             giftSubscriptionId: giftSubscription.id,
-            recipientId: giftSubscription.recipientId
+            recipientId: giftSubscription.recipient.id
           }
         );
 
@@ -451,6 +444,7 @@ export const handleCallbackQuery: CallbackQueryHandler = (bot: TelegramBot) => a
         // Находим подарочную подписку
         const giftSubscription = await prisma.giftSubscription.findUnique({
           where: { id: giftSubscriptionId },
+          include: { recipient: true }
         });
 
         if (!giftSubscription) {
@@ -494,7 +488,7 @@ export const handleCallbackQuery: CallbackQueryHandler = (bot: TelegramBot) => a
           {
             isGift: true,
             giftSubscriptionId: giftSubscription.id,
-            recipientId: giftSubscription.recipientId
+            recipientId: giftSubscription.recipient.id
           }
         );
 
@@ -1512,7 +1506,7 @@ export const handleCallbackQuery: CallbackQueryHandler = (bot: TelegramBot) => a
         // Находим подарочную подписку
         const giftSubscription = await prisma.giftSubscription.findUnique({
           where: { id: giftSubscriptionId },
-          // include: { recipient: true }
+          include: { recipient: true }
         });
 
         if (!giftSubscription) {
@@ -1556,7 +1550,7 @@ export const handleCallbackQuery: CallbackQueryHandler = (bot: TelegramBot) => a
           {
             isGift: true,
             giftSubscriptionId: giftSubscription.id,
-            recipientId: giftSubscription.recipientId
+            recipientId: giftSubscription.recipient.id
           }
         );
 
@@ -2130,53 +2124,59 @@ async function handleRefreshConfig(
  */
 export const handlePreCheckoutQuery = (bot: TelegramBot) => async (query: TelegramBot.PreCheckoutQuery): Promise<void> => {
   try {
-    logger.info(`Получен pre_checkout_query от пользователя ${query.from.id}: ${JSON.stringify(query)}`);
-
-    // Пытаемся разобрать payload
-    let payloadData: any = {};
+    logger.info(`Получен pre_checkout_query: ${query.id}`);
+    
+    // Разбираем payload, который содержит данные о платеже
+    let payloadData;
     try {
       payloadData = JSON.parse(query.invoice_payload);
-    } catch (parseError) {
-      logger.error(`Ошибка при разборе payload pre_checkout_query: ${parseError}`);
-      await answerPreCheckoutQuery(bot, query.id, false, 'Невозможно обработать данные платежа' );
+    } catch (error) {
+      logger.error(`Ошибка при разборе payload: ${error}`);
+      await bot.answerPreCheckoutQuery(query.id, false, 'Ошибка данных платежа');
       return;
     }
-
-    // Проверяем наличие обязательных полей
-    if (!payloadData.userId || !payloadData.subscriptionPeriod) {
-      logger.error(`Отсутствуют обязательные поля в payload: ${JSON.stringify(payloadData)}`);
-      await answerPreCheckoutQuery(bot, query.id, false, 'Неверные данные платежа' );
-      return;
-    }
-
-    // Проверяем существование пользователя
-    const userId = parseInt(payloadData.userId, 10);
-    const user = await prisma.user.findUnique({
-      where: { id: userId }
+    
+    const paymentId = payloadData.paymentId;
+    
+    // Находим платеж в нашей БД
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId }
     });
-
-    if (!user) {
-      logger.error(`Пользователь с ID ${userId} не найден при обработке pre_checkout_query`);
-      await answerPreCheckoutQuery(bot, query.id, false, 'Пользователь не найден' );
+    
+    if (!payment) {
+      logger.error(`Платеж ${paymentId} не найден в БД`);
+      await bot.answerPreCheckoutQuery(query.id, false, 'Платеж не найден');
       return;
     }
-
-    // Если всё в порядке, подтверждаем платёж
-    await answerPreCheckoutQuery(bot, query.id, true);
-    logger.info(`Pre-checkout query ${query.id} успешно подтвержден`);
-
+    
+    // Проверяем соответствие суммы платежа
+    if (payment.amount * 100 !== query.total_amount) {
+      logger.error(`Несоответствие суммы платежа: ${payment.amount * 100} != ${query.total_amount}`);
+      await bot.answerPreCheckoutQuery(query.id, false, 'Несоответствие суммы платежа');
+      return;
+    }
+    
+    // Все проверки пройдены, разрешаем платеж
+    logger.info(`Подтверждаем pre_checkout_query для платежа ${paymentId}`);
+    
+    // Используем новый сервис для ответа на pre_checkout_query
+    const yookassaTelegram = await import('../../services/yookassaTelegramPayments');
+    await yookassaTelegram.answerPreCheckoutQuery(bot, query.id, true);
+    
+    logger.info(`Pre_checkout_query ${query.id} успешно подтвержден`);
   } catch (error: any) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`Ошибка при обработке pre_checkout_query: ${errorMessage}`);
-
-    // Отклоняем платёж при ошибке
+    
     try {
-      await answerPreCheckoutQuery(bot, query.id, false, 'Произошла ошибка при обработке платежа' );
-    } catch (replyError) {
-      logger.error(`Не удалось ответить на pre_checkout_query: ${replyError}`);
+      // В случае ошибки отклоняем pre_checkout_query
+      await bot.answerPreCheckoutQuery(query.id, false, 'Произошла ошибка при обработке платежа');
+    } catch (retryError) {
+      logger.error(`Не удалось ответить на pre_checkout_query: ${retryError}`);
     }
   }
 };
+
 /**
  * Обработчик successful_payment от Telegram
  */
@@ -2191,7 +2191,7 @@ export const handleSuccessfulPayment = (bot: TelegramBot) => async (message: Tel
     
     // Обрабатываем успешный платеж через новый сервис
     const yookassaTelegram = await import('../../services/yookassaTelegramPayments');
-    await yookassaTelegram.handleSuccessfulYookassaTelegramPayment(message.successful_payment);
+    await yookassaTelegram.handleSuccessfulYookassaTelegramPayment(bot, message.successful_payment);
     
     logger.info('Успешный платеж обработан');
   } catch (error: any) {
@@ -2200,15 +2200,13 @@ export const handleSuccessfulPayment = (bot: TelegramBot) => async (message: Tel
     
     // Отправляем сообщение администратору об ошибке
     if (config.adminChatId) {
-    try {
-
       await bot.sendMessage(
-        message.chat.id.toString(),
+        config.adminChatId,
+        message.chat.id,
         '❌ Произошла ошибка при обработке вашего платежа. Пожалуйста, обратитесь в поддержку.'
       );
     } catch (sendError) {
       logger.error(`Не удалось отправить сообщение об ошибке: ${sendError}`);
-    }
     }
   }
 };
