@@ -341,20 +341,20 @@ update_system() {
 # Установка необходимых зависимостей
 install_dependencies() {
     log "Установка необходимых зависимостей..."
-    apt-get install -y \
-        curl \
-        wget \
-        unzip \
-        socat \
-        cron \
-        iptables \
-        nginx \
-        certbot \
-        python3-certbot-nginx \
-        jq \
-        ufw \
-        lsb-release \
-        moreutils \
+    apt-get install -y \\
+        curl \\
+        wget \\
+        unzip \\
+        socat \\
+        cron \\
+        iptables \\
+        nginx \\
+        certbot \\
+        python3-certbot-nginx \\
+        jq \\
+        ufw \\
+        lsb-release \\
+        moreutils \\
         openssh-client
 
     success "Зависимости установлены"
@@ -424,7 +424,7 @@ setup_ssl() {
     log "Настройка SSL для домена: $domain"
     
     # Проверяем, доступен ли домен
-    if [ -z "$domain" ] || [[ "$domain" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if [ -z "$domain" ] || [[ "$domain" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
         warning "Указан IP-адрес или домен отсутствует. Пропускаем получение SSL сертификата."
         return 1
     fi
@@ -521,15 +521,15 @@ configure_xray() {
     local key_path="/etc/letsencrypt/live/\${domain}/privkey.pem"
     
     # Если домен не указан или используется IP, используем самоподписанные сертификаты
-    if [ -z "$domain" ] || [[ "$domain" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if [ -z "$domain" ] || [[ "$domain" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
         warning "Используется IP-адрес. Генерируем самоподписанные сертификаты..."
         
         # Создаем директорию для сертификатов
         mkdir -p /usr/local/etc/xray/ssl
         
         # Генерируем самоподписанный сертификат
-        openssl req -x509 -newkey rsa:4096 -keyout /usr/local/etc/xray/ssl/private.key \
-            -out /usr/local/etc/xray/ssl/cert.pem -days 3650 -nodes \
+        openssl req -x509 -newkey rsa:4096 -keyout /usr/local/etc/xray/ssl/private.key \\
+            -out /usr/local/etc/xray/ssl/cert.pem -days 3650 -nodes \\
             -subj "/CN=\${domain:-localhost}"
         
         cert_path="/usr/local/etc/xray/ssl/cert.pem"
@@ -687,7 +687,7 @@ setup_api() {
     mkdir -p /usr/local/bin/vpn-api
     
     # Создаем сервер API
-    cat > /usr/local/bin/vpn-api/server.js << 'EOL'
+    cat > /usr/local/bin/vpn-api/server.js << 'EOLJS'
 const express = require('express');
 const fs = require('fs');
 const { execSync } = require('child_process');
@@ -722,11 +722,11 @@ function updateXrayConfig(configData) {
         config.inbounds[0].settings.clients.push({
           id: clientId,
           flow: "xtls-rprx-vision",
-          email: configData.email || `user-${clientId.substring(0, 8)}`
+          email: configData.email || 'user-' + clientId.substring(0, 8)
         });
-        message = `Клиент ${clientId} успешно добавлен`;
+        message = 'Клиент ' + clientId + ' успешно добавлен';
       } else {
-        return { success: false, message: `Клиент с ID ${clientId} уже существует` };
+        return { success: false, message: 'Клиент с ID ' + clientId + ' уже существует' };
       }
     } else if (configData.action === 'remove') {
       // Удаление клиента
@@ -738,10 +738,10 @@ function updateXrayConfig(configData) {
       config.inbounds[0].settings.clients = config.inbounds[0].settings.clients.filter(c => c.id !== configData.clientId);
       
       if (config.inbounds[0].settings.clients.length === initialLength) {
-        return { success: false, message: `Клиент с ID ${configData.clientId} не найден` };
+        return { success: false, message: 'Клиент с ID ' + configData.clientId + ' не найден' };
       }
       
-      message = `Клиент ${configData.clientId} успешно удален`;
+      message = 'Клиент ' + configData.clientId + ' успешно удален';
     } else if (configData.action === 'list') {
       // Просмотр списка клиентов
       return { 
@@ -774,7 +774,7 @@ function updateXrayConfig(configData) {
       // Создаем конфигурацию для клиента
       const clientConfig = {
         v: "2",
-        ps: configData.email || `VPN-Client-${configData.clientId.substring(0, 8)}`,
+        ps: configData.email || 'VPN-Client-' + configData.clientId.substring(0, 8),
         add: domain,
         port: "443",
         id: configData.clientId,
@@ -787,10 +787,10 @@ function updateXrayConfig(configData) {
         sni: ""
       };
       
-      fs.writeFileSync(`/root/xray-clients/${configData.clientId}.json`, JSON.stringify(clientConfig, null, 2));
+      fs.writeFileSync('/root/xray-clients/' + configData.clientId + '.json', JSON.stringify(clientConfig, null, 2));
       
       // Добавляем информацию о созданной конфигурации
-      message += `. Конфигурация клиента сохранена в /root/xray-clients/${configData.clientId}.json`;
+      message += '. Конфигурация клиента сохранена в /root/xray-clients/' + configData.clientId + '.json';
     }
     
     return { success: true, message };
@@ -850,9 +850,9 @@ app.get('/api/status', (req, res) => {
 
 // Запуск сервера
 app.listen(port, '127.0.0.1', () => {
-  console.log(\`API сервер запущен на порту \${port}\`);
+  console.log('API сервер запущен на порту ' + port);
 });
-EOL
+EOLJS
     
     # Создаем package.json для API
     cat > /usr/local/bin/vpn-api/package.json << EOL
@@ -933,7 +933,7 @@ main() {
     setup_firewall
     
     # Установка SSL (если указан домен)
-    if [ -n "$domain" ] && ! [[ "$domain" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if [ -n "$domain" ] && ! [[ "$domain" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
         setup_ssl "$domain" "$email"
     fi
     
