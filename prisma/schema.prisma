@@ -45,6 +45,7 @@ model VpnServer {
   isActive          Boolean       @default(true)
   maxClients        Int           @default(50) // Максимальное количество одновременных подключений
   currentClients    Int           @default(0)  // Текущее количество подключений
+  isAutoScaled      Boolean       @default(false) // Флаг, что сервер создан автоматически
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
   subscriptions     Subscription[]

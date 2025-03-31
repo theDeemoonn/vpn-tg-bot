@@ -42,6 +42,11 @@ const Layout: React.FC = () => {
                 </NavLink>
               </li>
               <li>
+                <NavLink to="/autoscaling" className={({ isActive }) => isActive ? 'active' : ''}>
+                  Автомасштабирование
+                </NavLink>
+              </li>
+              <li>
                 <NavLink to="/subscriptions" className={({ isActive }) => isActive ? 'active' : ''}>
                   Подписки
                 </NavLink>

@@ -56,7 +56,8 @@
     "jimp": "^1.6.0",
     "jsonwebtoken": "^9.0.2",
     "nanoid": "^3.3.6",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "cron": "^2.3.0"
   },
   "engines": {
     "node": ">=18.0.0"

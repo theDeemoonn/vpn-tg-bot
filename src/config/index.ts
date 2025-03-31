@@ -36,6 +36,11 @@ interface Config {
   // VPN Server Deployment
   sshPrivateKeyPath: string;
   sshUser: string;
+  doApiKey: string;       // DigitalOcean API ключ
+  doSshKeyId: string;     // ID SSH ключа в DigitalOcean
+  defaultProvider: string; // Провайдер по умолчанию
+  defaultMaxClients: number; // Максимальное кол-во клиентов по умолчанию
+  deploymentRegions: string[]; // Регионы для развертывания
   
   // Auto Renewal Settings
   enableAutoRenewal: boolean;
@@ -105,6 +110,11 @@ const config: Config = {
   // VPN Server Deployment
   sshPrivateKeyPath: process.env.SSH_PRIVATE_KEY_PATH || path.resolve(process.cwd(), 'keys', 'id_rsa'),
   sshUser: process.env.SSH_USER || 'root',
+  doApiKey: process.env.DO_API_KEY || '',
+  doSshKeyId: process.env.DO_SSH_KEY_ID || '',
+  defaultProvider: process.env.DEFAULT_PROVIDER || 'DigitalOcean',
+  defaultMaxClients: parseInt(process.env.DEFAULT_MAX_CLIENTS || '100', 10),
+  deploymentRegions: (process.env.DEPLOYMENT_REGIONS || 'amsterdam,frankfurt,london').split(','),
   
   // Auto Renewal Settings
   enableAutoRenewal: process.env.ENABLE_AUTO_RENEWAL === 'true',

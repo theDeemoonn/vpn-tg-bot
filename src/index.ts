@@ -13,6 +13,8 @@ import { validateYookassaWebhook } from './middlewares/yookassaWebhookAuth';
 import { startPaymentChecker } from './services/paymentChecker';
 import path from 'path';
 import apiRoutes from './api';
+import { initScheduler } from './services/scheduler';
+import { initializeRealServer } from './services/server';
 
 // Загружаем переменные окружения
 dotenv.config();
@@ -234,6 +236,14 @@ async function startServer() {
 
       // Запускаем фоновые задачи
       setupBackgroundTasks();
+      
+      // Инициализация планировщика задач
+      initScheduler();
+      
+      // Инициализация реального VPN-сервера
+      await initializeRealServer();
+      
+      logger.info('Бот успешно запущен!');
     });
 
     // Обработчик завершения работы приложения

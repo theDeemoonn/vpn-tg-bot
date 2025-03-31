@@ -1,141 +1,143 @@
-const { PrismaClient } = require('@prisma/client');
+import { PrismaClient } from '@prisma/client';
+import { hash } from 'bcrypt';
 
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('Начинаем заполнение базы данных...');
-
-  // Создаем запись для администратора в User
-  const admin = await prisma.user.upsert({
-    where: { telegramId: BigInt(1) },
-    update: {
-      isAdmin: true,
-      isActive: true,
-    },
-    create: {
-      telegramId: BigInt(1),
-      firstName: 'Admin',
-      lastName: 'User',
-      isAdmin: true,
-      isActive: true,
-    },
-  });
-
-  console.log(`Создан администратор: ${admin.firstName} ${admin.lastName}`);
-
-  // Создаем настройки с учетными данными для входа
-  const adminUsername = await prisma.setting.upsert({
-    where: { key: 'ADMIN_USERNAME' },
-    update: { value: 'admin' },
-    create: {
-      key: 'ADMIN_USERNAME',
-      value: 'admin',
-      description: 'Имя пользователя для входа в админ-панель',
-    },
-  });
-
-  const adminPassword = await prisma.setting.upsert({
-    where: { key: 'ADMIN_PASSWORD' },
-    update: { value: 'admin123' },
-    create: {
-      key: 'ADMIN_PASSWORD',
-      value: 'admin123',
-      description: 'Пароль для входа в админ-панель',
-    },
-  });
-
-  console.log(`Настройки для админ-панели созданы: 
-    - Логин: ${adminUsername.value}
-    - Пароль: ${adminPassword.value}
-  `);
-
-  // Заполняем FAQ
-  console.log('Заполняем таблицу FAQ...');
+  console.log('Начало заполнения базы данных...');
   
-  // Массив с тестовыми данными FAQ
-  const faqItems = [
-    {
-      question: 'Что такое VPN?',
-      answer: 'VPN (Virtual Private Network) - это технология, которая создает защищенное соединение между вашим устройством и интернетом. Она шифрует ваш трафик и скрывает ваш IP-адрес, обеспечивая конфиденциальность и безопасность в сети.',
-      category: 'Общие вопросы',
-      orderIndex: 1,
-    },
-    {
-      question: 'Как установить VPN на мой телефон?',
-      answer: 'Для установки VPN на телефон:\n1. Скачайте приложение из инструкции, которую вы получите после оплаты\n2. Откройте приложение и добавьте новую конфигурацию\n3. Отсканируйте QR-код из нашего бота или импортируйте конфигурационный файл\n4. Нажмите кнопку подключения и готово!',
-      category: 'Установка',
-      orderIndex: 2,
-    },
-    {
-      question: 'Как установить VPN на компьютер?',
-      answer: 'Для установки VPN на компьютер:\n1. Скачайте приложение Xray или V2ray для вашей операционной системы\n2. Установите приложение\n3. Импортируйте конфигурационный файл, который вы получите в боте после оплаты\n4. Запустите VPN-соединение',
-      category: 'Установка',
-      orderIndex: 3,
-    },
-    {
-      question: 'Какие способы оплаты вы принимаете?',
-      answer: 'Мы принимаем оплату через ЮKassa (банковские карты, электронные кошельки, Apple Pay, Google Pay) и Telegram Payments. При оформлении подписки вы сможете выбрать удобный для вас способ оплаты.',
-      category: 'Оплата',
-      orderIndex: 4,
-    },
-    {
-      question: 'Как работает автопродление подписки?',
-      answer: 'При включенном автопродлении система автоматически создаст платеж для продления вашей подписки за день до истечения текущего срока. Вы получите уведомление о списании средств. Вы можете включить или отключить автопродление в любое время в разделе "Мои подписки".',
-      category: 'Подписка',
-      orderIndex: 5,
-    },
-    {
-      question: 'Что делать, если VPN не работает?',
-      answer: 'Если VPN не работает:\n1. Проверьте подключение к интернету\n2. Убедитесь, что срок вашей подписки не истек\n3. Попробуйте переустановить конфигурацию\n4. Обратитесь в поддержку через бота, отправив команду /support',
-      category: 'Техническая поддержка',
-      orderIndex: 6,
-    },
-    {
-      question: 'Сколько устройств я могу подключить с одной подпиской?',
-      answer: 'Одна подписка позволяет подключить до 3 устройств одновременно. Если вам нужно больше подключений, вы можете приобрести дополнительную подписку.',
-      category: 'Подписка',
-      orderIndex: 7,
-    },
-    {
-      question: 'Можно ли получить возврат денег?',
-      answer: 'Мы предлагаем возврат средств в течение 24 часов после покупки, если сервис не работает должным образом. Для запроса возврата отправьте команду /refund в бота и опишите вашу проблему.',
-      category: 'Оплата',
-      orderIndex: 8,
-    },
-    {
-      question: 'Что такое реферальная программа?',
-      answer: 'Наша реферальная программа позволяет получить бонусные дни подписки за приглашенных друзей. Когда ваш друг регистрируется по вашей реферальной ссылке и оплачивает подписку, вы получаете бонус в виде дополнительных дней к вашей подписке. Чтобы получить реферальную ссылку, используйте команду /referral.',
-      category: 'Бонусы',
-      orderIndex: 9,
-    },
-    {
-      question: 'Как обновить конфигурацию VPN?',
-      answer: 'Для обновления конфигурации VPN используйте команду /subscription в боте, выберите нужную подписку и нажмите "Показать QR-код" или "Скачать конфигурацию". Затем импортируйте новую конфигурацию в ваше VPN-приложение.',
-      category: 'Техническая поддержка',
-      orderIndex: 10,
+  // Создаем администратора
+  const admin = await prisma.admin.upsert({
+    where: { username: 'admin' },
+    update: {},
+    create: {
+      username: 'admin',
+      password: await hash('admin', 10),
+      email: 'admin@example.com',
+      isActive: true
     }
-  ];
-
-  // Очищаем существующие данные FAQ
-  await prisma.faqItem.deleteMany({});
-
-  // Добавляем новые данные FAQ
-  for (const faqItem of faqItems) {
-    await prisma.faqItem.create({
-      data: faqItem,
+  });
+  
+  console.log(`Создан администратор: ${admin.username}`);
+  
+  // Проверяем флаг для создания тестовых данных
+  const createTestData = process.env.CREATE_TEST_DATA === 'true';
+  
+  if (createTestData) {
+    console.log('Создание тестовых данных включено, добавляем тестовый сервер...');
+    
+    // Создаем тестовый VPN сервер только если указан флаг CREATE_TEST_DATA
+    const testServer = await prisma.vpnServer.upsert({
+      where: { id: 1 },
+      update: {},
+      create: {
+        name: 'Test VPN Server',
+        host: 'vpn.example.com',
+        port: 1194,
+        maxClients: 100,
+        isActive: true,
+        configData: `# Конфигурация сервера
+# Это пример конфигурации
+server {
+  listen 80;
+  server_name example.com;
+}`,
+        location: 'amsterdam',
+        provider: 'test'
+      }
     });
+    
+    console.log(`Создан тестовый VPN сервер: ${testServer.name}`);
+    
+    // Создаем тестовые тарифные планы
+    const monthlyPlan = await prisma.plan.upsert({
+      where: { id: 1 },
+      update: {},
+      create: {
+        name: 'Месячный',
+        description: 'Доступ к VPN на 1 месяц',
+        price: 299,
+        durationDays: 30,
+        isActive: true
+      }
+    });
+    
+    const quarterlyPlan = await prisma.plan.upsert({
+      where: { id: 2 },
+      update: {},
+      create: {
+        name: 'Квартальный',
+        description: 'Доступ к VPN на 3 месяца',
+        price: 799,
+        durationDays: 90,
+        isActive: true
+      }
+    });
+    
+    const annualPlan = await prisma.plan.upsert({
+      where: { id: 3 },
+      update: {},
+      create: {
+        name: 'Годовой',
+        description: 'Доступ к VPN на 12 месяцев',
+        price: 2999,
+        durationDays: 365,
+        isActive: true
+      }
+    });
+    
+    console.log(`Созданы тарифные планы: ${monthlyPlan.name}, ${quarterlyPlan.name}, ${annualPlan.name}`);
+  } else {
+    console.log('Создание тестовых данных отключено, пропускаем создание тестового сервера...');
+    
+    // Создаем только тарифные планы без тестового сервера
+    const monthlyPlan = await prisma.plan.upsert({
+      where: { id: 1 },
+      update: {},
+      create: {
+        name: 'Месячный',
+        description: 'Доступ к VPN на 1 месяц',
+        price: 299,
+        durationDays: 30,
+        isActive: true
+      }
+    });
+    
+    const quarterlyPlan = await prisma.plan.upsert({
+      where: { id: 2 },
+      update: {},
+      create: {
+        name: 'Квартальный',
+        description: 'Доступ к VPN на 3 месяца',
+        price: 799,
+        durationDays: 90,
+        isActive: true
+      }
+    });
+    
+    const annualPlan = await prisma.plan.upsert({
+      where: { id: 3 },
+      update: {},
+      create: {
+        name: 'Годовой',
+        description: 'Доступ к VPN на 12 месяцев',
+        price: 2999,
+        durationDays: 365,
+        isActive: true
+      }
+    });
+    
+    console.log(`Созданы тарифные планы: ${monthlyPlan.name}, ${quarterlyPlan.name}, ${annualPlan.name}`);
   }
-
-  console.log(`Добавлено ${faqItems.length} FAQ записей`);
-  console.log('Заполнение базы данных завершено.');
+  
+  console.log('Заполнение базы данных завершено!');
 }
 
 main()
-  .then(async () => {
-    await prisma.$disconnect();
-  })
-  .catch(async (e) => {
+  .catch((e) => {
     console.error(e);
-    await prisma.$disconnect();
     process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
   }); 

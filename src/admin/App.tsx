@@ -8,6 +8,7 @@ import UserDetail from './pages/UserDetail';
 import Servers from './pages/Servers';
 import ServerDetail from './pages/ServerDetail';
 import DeployServer from './pages/DeployServer';
+import AutoScaling from './pages/AutoScaling';
 import Subscriptions from './pages/Subscriptions';
 import Payments from './pages/Payments';
 import Settings from './pages/Settings';
@@ -72,6 +73,7 @@ const App: React.FC = () => {
         <Route path="servers" element={<Servers />} />
         <Route path="servers/deploy" element={<DeployServer />} />
         <Route path="servers/:id" element={<ServerDetail />} />
+        <Route path="autoscaling" element={<AutoScaling />} />
         <Route path="subscriptions" element={<Subscriptions />} />
         <Route path="payments" element={<Payments />} />
         <Route path="settings" element={<Settings />} />
