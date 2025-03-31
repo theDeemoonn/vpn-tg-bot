@@ -174,19 +174,18 @@ export async function createYookassaTelegramPayment(
       giftSubscriptionId?: number;
       recipientId?: number;
     }
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; paymentId?: string }> {
   try {
-    // Проверяем наличие токена для ЮKassa Payments в Telegram
+    // Проверяем наличие токена для Telegram Payments
     if (!config.telegramPaymentToken || config.telegramPaymentToken.trim() === '') {
-      throw new Error('Отсутствует токен для ЮKassa Payments в Telegram');
+      logger.error('Отсутствует токен для Telegram Payments');
+      return { success: false, error: 'Токен платежей не настроен' };
     }
 
-    // Проверка токена менее строгая - он может иметь разные форматы
-    // Токен должен быть просто непустой строкой
-    const token = config.telegramPaymentToken.trim();
-    logger.debug(`Используемый токен для платежей: ${token.substring(0, 4)}...${token.substring(token.length - 4)}`);
+    // Генерация уникального ID для платежа
+    const paymentId = `tg_${Date.now()}_${user.id}`;
 
-    // Получаем сумму и описание подписки
+    // Получение суммы и описания подписки
     const amount = getPaymentAmount(period);
     const isGift = options?.isGift || false;
     const title = isGift
@@ -225,7 +224,6 @@ export async function createYookassaTelegramPayment(
     const payload = JSON.stringify(metadata);
 
     // Создаем запись о платеже в БД
-    const paymentId = `tg_${Date.now()}_${user.id}`;
     await prisma.payment.create({
       data: {
         id: paymentId,
@@ -235,7 +233,7 @@ export async function createYookassaTelegramPayment(
         currency: 'RUB',
         status: PaymentStatus.PENDING,
         description: description,
-        paymentMethod: 'YOOKASSA_TELEGRAM',
+        paymentMethod: 'TELEGRAM_DIRECT',
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // Платеж активен 24 часа
       }
     });
@@ -250,7 +248,7 @@ export async function createYookassaTelegramPayment(
       });
     }
 
-    // Формируем массив цен с правильными типами данных
+    // Формируем массив цен для Telegram API
     const prices = [
       {
         label: title,
@@ -263,182 +261,70 @@ export async function createYookassaTelegramPayment(
 
     logger.info(`Создаю платежный счет через sendInvoice для пользователя: ${user.id}, telegramId: ${user.telegramId}, период: ${period}`);
 
-    // Отправляем платежный инвойс через Telegram API
-    // Настраиваем параметры согласно документации https://core.telegram.org/bots/api#sendinvoice
-    const invoiceOptions: TelegramBot.SendInvoiceOptions = {
-      need_name: false,
-      need_phone_number: false,
-      need_email: false,
-      need_shipping_address: false,
-      is_flexible: false,
-      disable_notification: false,
-      protect_content: false,
-      start_parameter: `vpn_payment_${period}`,
-      photo_url: 'https://i.imgur.com/YRBvM9x.png', // Изображение для инвойса
-      photo_width: 600,
-      photo_height: 300
-    };
-
+    // Напрямую используем метод sendInvoice из библиотеки node-telegram-bot-api
     try {
-      // Используем метод отправки счета напрямую через Telegram Bot API
-      const apiUrl = `https://api.telegram.org/bot${config.telegramBotToken}/sendInvoice`;
-
-      // Формируем данные согласно документации https://core.telegram.org/bots/api#sendinvoice
-      const invoiceData = {
-        chat_id: chatId,
-        title: title,
-        description: description,
-        payload: payload,
-        provider_token: token,
-        currency: 'RUB',
-        prices: prices,
-        start_parameter: invoiceOptions.start_parameter,
-        photo_url: invoiceOptions.photo_url,
-        photo_width: invoiceOptions.photo_width,
-        photo_height: invoiceOptions.photo_height,
-        need_name: invoiceOptions.need_name || false,
-        need_phone_number: invoiceOptions.need_phone_number || false,
-        need_email: invoiceOptions.need_email || false,
-        need_shipping_address: invoiceOptions.need_shipping_address || false,
-        is_flexible: invoiceOptions.is_flexible || false,
-        disable_notification: invoiceOptions.disable_notification || false,
-        protect_content: invoiceOptions.protect_content || false
-      };
-
-      // Детальное логирование запроса (без sensitive data)
-      const debugData = {
-        ...invoiceData,
-        provider_token: '***HIDDEN***',
-        payload: '***HIDDEN***'
-      };
-      logger.debug(`Отправка API запроса sendInvoice: ${JSON.stringify(debugData)}`);
-
-      // Отправляем запрос напрямую через API
-      try {
-        const response = await axios.post(apiUrl, invoiceData);
-
-        if (response.data && response.data.ok) {
-          logger.info(`Платежный счет успешно отправлен через Telegram API пользователю ${user.telegramId}`);
-
-          // Отправляем дополнительное информационное сообщение
-          setTimeout(async () => {
-            try {
-              await bot.sendMessage(
-                  chatId,
-                  `ℹ️ *Информация об оплате*\n\nДля совершения платежа нажмите кнопку оплаты выше ⬆️\n\nПосле успешной оплаты ваша подписка будет активирована автоматически.\n\nID платежа: \`${paymentId}\``,
-                  {
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                      inline_keyboard: [
-                        [{ text: '🔄 Проверить статус платежа', callback_data: `check_payment_${paymentId}` }]
-                      ]
-                    }
-                  }
-              );
-            } catch (error) {
-              logger.error(`Не удалось отправить дополнительное сообщение: ${error}`);
-            }
-          }, 1500);
-
-          return { success: true };
-        } else {
-          // Если API запрос вернул ошибку в ответе
-          logger.error(`Ошибка в ответе API: ${JSON.stringify(response.data)}`);
-
-          // Пробуем альтернативный метод через node-telegram-bot-api
-          logger.info(`Пробуем альтернативный метод отправки инвойса через node-telegram-bot-api`);
-          const sentInvoice = await bot.sendInvoice(
-              chatId,
-              title,
-              description,
-              payload,
-              token,
-              'RUB',
-              prices,
-              invoiceOptions
-          );
-
-          logger.info(`Платежный счет успешно отправлен через node-telegram-bot-api пользователю ${user.telegramId}, message_id: ${sentInvoice.message_id}`);
-
-          // Отправляем дополнительное информационное сообщение
-          setTimeout(async () => {
-            try {
-              await bot.sendMessage(
-                  chatId,
-                  `ℹ️ *Информация об оплате*\n\nДля совершения платежа нажмите кнопку оплаты выше ⬆️\n\nПосле успешной оплаты ваша подписка будет активирована автоматически.\n\nID платежа: \`${paymentId}\``,
-                  {
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                      inline_keyboard: [
-                        [{ text: '🔄 Проверить статус платежа', callback_data: `check_payment_${paymentId}` }]
-                      ]
-                    }
-                  }
-              );
-            } catch (error) {
-              logger.error(`Не удалось отправить дополнительное сообщение: ${error}`);
-            }
-          }, 1500);
-
-          return { success: true };
-        }
-      } catch (apiError: any) {
-        // Логируем подробности ошибки API запроса
-        if (apiError.response) {
-          // Сервер ответил с кодом статуса вне диапазона 2xx
-          logger.error(`Ошибка API запроса (${apiError.response.status}): ${JSON.stringify(apiError.response.data)}`);
-
-          // Если ошибка связана с невалидным провайдером платежей, предлагаем альтернативу
-          if (apiError.response.data &&
-              apiError.response.data.description &&
-              (apiError.response.data.description.includes('PAYMENT_PROVIDER_INVALID') ||
-                  apiError.response.data.description.includes('provider_token'))) {
-
-            logger.error('Обнаружена ошибка с провайдером платежей. Предлагаем альтернативный метод оплаты.');
-
-            // Предлагаем альтернативный способ оплаты
-            await offerAlternativePayment(bot, chatId, user, period, options, paymentId);
-            return { success: false, error: 'Платеж через Telegram недоступен. Предложена альтернатива.' };
+      const sentInvoice = await bot.sendInvoice(
+          chatId,
+          title,
+          description,
+          payload,
+          config.telegramPaymentToken,
+          'RUB',
+          prices,
+          {
+            need_name: false,
+            need_phone_number: false,
+            need_email: false,
+            need_shipping_address: false,
+            is_flexible: false,
+            disable_notification: false,
+            protect_content: false,
+            photo_url: 'https://i.imgur.com/Rt637e5.jpeg',
+            photo_width: 600,
+            photo_height: 300
           }
-        } else if (apiError.request) {
-          // Запрос был сделан, но не получен ответ
-          logger.error('Нет ответа от Telegram API:', apiError.request);
-        } else {
-          // Ошибка при настройке запроса
-          logger.error('Ошибка настройки запроса:', apiError.message);
-        }
+      );
 
-        // Пробуем использовать стандартный метод node-telegram-bot-api
-        throw apiError;
-      }
+      logger.info(`Платежный счет успешно отправлен пользователю ${user.telegramId}, message_id: ${sentInvoice.message_id}`);
+
+      // Отправляем дополнительное информационное сообщение
+      setTimeout(async () => {
+        try {
+          await bot.sendMessage(
+              chatId,
+              `ℹ️ *Информация об оплате*\n\nДля совершения платежа нажмите кнопку оплаты выше ⬆️\n\nПосле успешной оплаты ваша подписка будет активирована автоматически.\n\nID платежа: \`${paymentId}\``,
+              {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                  inline_keyboard: [
+                    [{ text: '🔄 Проверить статус платежа', callback_data: `check_payment_${paymentId}` }]
+                  ]
+                }
+              }
+          );
+        } catch (error) {
+          logger.error(`Не удалось отправить дополнительное сообщение: ${error}`);
+        }
+      }, 1500);
+
+      return { success: true, paymentId };
     } catch (invoiceError: any) {
       logger.error(`Ошибка при отправке invoice: ${invoiceError}`);
 
-      // Если ошибка связана с провайдером платежей, предлагаем альтернативный метод
-      if (invoiceError.toString().includes('PAYMENT_PROVIDER_INVALID') ||
-          invoiceError.toString().includes('provider_token')) {
+      // Удаляем созданный платеж из базы данных
+      await prisma.payment.delete({
+        where: { id: paymentId }
+      }).catch(e => logger.warn(`Не удалось удалить платеж ${paymentId}: ${e}`));
 
-        await offerAlternativePayment(bot, chatId, user, period, options, paymentId);
-        return { success: false, error: 'Платеж через Telegram недоступен. Предложена альтернатива.' };
-      }
-
-      // Для других ошибок предлагаем стандартный способ оплаты через ЮKassa напрямую
-      await offerAlternativePayment(bot, chatId, user, period, options, paymentId);
-      return { success: false, error: 'Ошибка при отправке платежа через Telegram. Предложена альтернатива.' };
+      // Возвращаем ошибку для дальнейшей обработки
+      return {
+        success: false,
+        error: invoiceError.toString().substring(0, 100) // Ограничиваем длину строки ошибки
+      };
     }
   } catch (error: any) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error(`Ошибка при создании платежа ЮKassa через Telegram: ${errorMessage}`);
-
-    // Пробуем отправить обычное сообщение с объяснением ошибки
-    try {
-      await bot.sendMessage(
-          chatId,
-          `❌ Не удалось создать платеж через Telegram: ${errorMessage}\n\nПожалуйста, попробуйте использовать другой способ оплаты.`
-      );
-    } catch (msgError) {
-      logger.error(`Не удалось отправить сообщение об ошибке: ${msgError}`);
-    }
+    logger.error(`Ошибка при создании платежа через Telegram: ${errorMessage}`);
 
     return { success: false, error: errorMessage };
   }

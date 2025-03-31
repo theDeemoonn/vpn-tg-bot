@@ -134,7 +134,9 @@ export const handleCallbackQuery: CallbackQueryHandler = (bot: TelegramBot) => a
 
       // Вместо создания URL для оплаты напрямую, показываем выбор метода оплаты
       await handleSelectPaymentMethod(bot, chatId, messageId, period, undefined);
-    } else if (callbackData.startsWith('pay_telegram_direct_')) {
+    }
+
+    else if (callbackData.startsWith('pay_telegram_direct_')) {
       // Обработка выбора способа оплаты через прямой Telegram Payment API
       const parts = callbackData.replace('pay_telegram_direct_', '').split('_');
       const periodStr = parts[0];
@@ -167,44 +169,67 @@ export const handleCallbackQuery: CallbackQueryHandler = (bot: TelegramBot) => a
         }
 
         // Информируем пользователя о подготовке платежа
-        await bot.editMessageText(`⏳ Подготовка прямого платежа через Telegram...`, {
+        await bot.editMessageText(`⏳ Подготовка платежа через Telegram...`, {
           chat_id: chatId,
           message_id: messageId,
           parse_mode: 'Markdown'
         });
 
+        // Импортируем функцию создания платежа
+        const { createYookassaTelegramPayment } = require('../../services/yookassaTelegramPayments');
+
         // Создаем платеж через Telegram
-        const result = await createTelegramDirectPayment(
-          bot,
-          chatId,
-          user,
-          period,
-          { subscriptionId: subscriptionId }
+        const result = await createYookassaTelegramPayment(
+            bot,
+            chatId,
+            user,
+            period,
+            { subscriptionId: subscriptionId }
         );
 
         if (!result.success) {
           throw new Error(result.error || 'Не удалось создать платеж');
         }
 
-        // Платеж уже создан и отправлен пользователю через инвойс
-        logger.info(`Создан прямой платеж через Telegram для пользователя ${user.id}: ${result.paymentId}`);
+        // Платеж успешно создан
+        logger.info(`Создан платеж через Telegram для пользователя ${user.id}: ${result.paymentId}`);
+
+        // Обновляем сообщение (не требуется, createYookassaTelegramPayment уже отправляет инвойс)
+        await bot.editMessageText(
+            `✅ Счет на оплату отправлен. Используйте кнопку оплаты в сообщении ниже ⬇️`,
+            {
+              chat_id: chatId,
+              message_id: messageId,
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: '🔙 Вернуться к тарифам', callback_data: 'buy' }]
+                ]
+              }
+            }
+        );
       } catch (error: any) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error(`Ошибка при создании прямого платежа через Telegram: ${errorMessage}`);
 
         await bot.editMessageText(
-          `❌ Произошла ошибка при подготовке платежа: ${errorMessage}\n\nПожалуйста, попробуйте позже или выберите другой способ оплаты.`,
-          {
-            chat_id: chatId,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'buy' }]]
+            `❌ Произошла ошибка при подготовке платежа: ${errorMessage}\n\nПожалуйста, попробуйте позже или выберите другой способ оплаты.`,
+            {
+              chat_id: chatId,
+              message_id: messageId,
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: '💳 Оплатить картой', callback_data: `pay_card_${periodStr}${subscriptionId ? '_' + subscriptionId : ''}` }],
+                  [{ text: '🔙 Назад', callback_data: 'buy' }]
+                ]
+              }
             }
-          }
         );
       }
-    } else if (callbackData.startsWith('pay_telegram_') && !callbackData.startsWith('pay_telegram_direct_')) {
+    }
+
+    else if (callbackData.startsWith('pay_telegram_') && !callbackData.startsWith('pay_telegram_direct_')) {
       // Обработка выбора способа оплаты через Telegram (ЮKassa)
       const parts = callbackData.replace('pay_telegram_', '').split('_');
       const periodStr = parts[0];
