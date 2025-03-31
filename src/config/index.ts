@@ -103,7 +103,7 @@ const config: Config = {
   annualSubscriptionPrice: parseInt(process.env.ANNUAL_SUBSCRIPTION_PRICE || '2999', 10),
   
   // VPN Server Deployment
-  sshPrivateKeyPath: process.env.SSH_PRIVATE_KEY_PATH || path.resolve(process.env.HOME || '', '.ssh/id_rsa'),
+  sshPrivateKeyPath: process.env.SSH_PRIVATE_KEY_PATH || path.resolve(process.cwd(), 'keys', 'id_rsa'),
   sshUser: process.env.SSH_USER || 'root',
   
   // Auto Renewal Settings
@@ -127,5 +127,9 @@ const config: Config = {
   fiscalizationDefaultEmail: process.env.FISCALIZATION_DEFAULT_EMAIL || 'client@example.com',
   fiscalizationVatCode: process.env.FISCALIZATION_VAT_CODE || '1'
 };
+
+// Экспортируем настройки SSH для удобства использования
+export const sshUser = config.sshUser;
+export const sshPrivateKeyPath = config.sshPrivateKeyPath;
 
 export default config; 

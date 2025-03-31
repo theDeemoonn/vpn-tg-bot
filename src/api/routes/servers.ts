@@ -5,7 +5,9 @@ import {
   getServerById, 
   createServer, 
   updateServer, 
-  deleteServer 
+  deleteServer,
+  deployServer,
+  getDeploymentStatus
 } from '../controllers/servers.controller';
 
 const router = express.Router();
@@ -27,5 +29,11 @@ router.put('/:id', updateServer);
 
 // Удаление сервера
 router.delete('/:id', deleteServer);
+
+// Развертывание VPN сервера
+router.post('/deploy', deployServer);
+
+// Получение статуса развертывания
+router.get('/deploy/:deploymentId/status', getDeploymentStatus);
 
 export default router; 

@@ -56,6 +56,11 @@ const Layout: React.FC = () => {
                   Настройки
                 </NavLink>
               </li>
+              <li>
+                <NavLink to="/about" className={({ isActive }) => isActive ? 'active' : ''}>
+                  О проекте
+                </NavLink>
+              </li>
             </ul>
           </nav>
         </aside>

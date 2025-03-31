@@ -7,9 +7,11 @@ import Users from './pages/Users';
 import UserDetail from './pages/UserDetail';
 import Servers from './pages/Servers';
 import ServerDetail from './pages/ServerDetail';
+import DeployServer from './pages/DeployServer';
 import Subscriptions from './pages/Subscriptions';
 import Payments from './pages/Payments';
 import Settings from './pages/Settings';
+import About from './pages/About';
 import { checkAuthStatus } from './services/auth';
 
 const App: React.FC = () => {
@@ -68,10 +70,12 @@ const App: React.FC = () => {
         <Route path="users" element={<Users />} />
         <Route path="users/:id" element={<UserDetail />} />
         <Route path="servers" element={<Servers />} />
+        <Route path="servers/deploy" element={<DeployServer />} />
         <Route path="servers/:id" element={<ServerDetail />} />
         <Route path="subscriptions" element={<Subscriptions />} />
         <Route path="payments" element={<Payments />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="about" element={<About />} />
       </Route>
       
       <Route path="*" element={<Navigate to="/" replace />} />

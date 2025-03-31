@@ -44,9 +44,14 @@ const Servers: React.FC = () => {
     <div className="servers-page">
       <div className="page-header">
         <h1 className="page-title">Серверы</h1>
-        <Link to="/servers/new" className="btn btn-primary">
-          Добавить сервер
-        </Link>
+        <div className="header-actions">
+          <Link to="/servers/deploy" className="btn btn-success">
+            Развернуть VPN сервер
+          </Link>
+          <Link to="/servers/new" className="btn btn-primary">
+            Добавить сервер
+          </Link>
+        </div>
       </div>
       
       {error && <div className="error-message">{error}</div>}
