@@ -64,19 +64,15 @@ export async function initializeRealServer(): Promise<void> {
         const selectedRegion = regions[0];
         
         // Создаем первый реальный VPN-сервер
-        const deploymentResult = await deploymentService.deployVpnServer({
-          name: `${selectedRegion.charAt(0).toUpperCase() + selectedRegion.slice(1)}-1`,
-          location: selectedRegion,
-          provider: config.defaultProvider,
-          maxClients: config.defaultMaxClients,
-          isAutoScaled: false
-        });
+        // const deploymentResult = await deploymentService.deployVpnServer({
+        //   name: `${selectedRegion.charAt(0).toUpperCase() + selectedRegion.slice(1)}-1`,
+        //   location: selectedRegion,
+        //   provider: config.defaultProvider,
+        //   maxClients: config.defaultMaxClients,
+        //   isAutoScaled: false
+        // });
         
-        if (deploymentResult.success) {
-          logger.info(`Успешно запущено развертывание первого VPN-сервера (ID: ${deploymentResult.serverId})`);
-        } else {
-          logger.error(`Ошибка при развертывании первого сервера: ${deploymentResult.error}`);
-        }
+
       } else {
         logger.warn('Настройки для автоматического развертывания не обнаружены. Необходимо вручную настроить .env файл.');
       }

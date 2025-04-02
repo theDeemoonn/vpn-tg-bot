@@ -51,6 +51,7 @@ model VpnServer {
   apiToken          String?       // Токен для API  
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
+  configData      String?  
   subscriptions     Subscription[]
 }
 

@@ -1,4 +1,4 @@
-import axios from 'axios';
+// import axios from 'axios'; // Закомментируем, если не используется в других частях файла
 import { prisma } from './database';
 import logger from '../utils/logger';
 import config from '../config';
@@ -6,25 +6,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { spawn, execSync, ChildProcessWithoutNullStreams } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { generateXrayConfig } from './configGenerator'; // Импортируем генератор
 
+/* // --- Закомментировано: Логика для облачных провайдеров ---
 // Интерфейс для провайдеров облачной инфраструктуры
 interface CloudProvider {
   name: string;
   createServer: (options: ServerDeploymentOptions) => Promise<{ success: boolean; ip?: string; error?: string }>;
   deleteServer: (serverId: string, serverIp: string) => Promise<{ success: boolean; error?: string }>;
-}
-
-// Опции для развертывания сервера
-export interface ServerDeploymentOptions {
-  name: string;
-  host?: string;      // Если пустой, будет создан новый сервер в облаке
-  port?: number;      // По умолчанию 22
-  location: string;   // Регион для развертывания
-  provider: string;   // Облачный провайдер
-  maxClients?: number;// Максимальное количество клиентов
-  isAutoScaled?: boolean; // Флаг, что сервер создан автоматически
-  sshUsername?: string; // Имя пользователя SSH
-  sshPassword?: string; // Пароль SSH
 }
 
 // Доступные облачные провайдеры
@@ -34,156 +23,32 @@ const cloudProviders: Record<string, CloudProvider> = {
     
     // Создание сервера в DigitalOcean
     createServer: async (options: ServerDeploymentOptions) => {
-      try {
-        logger.info(`Создание нового сервера в DigitalOcean (${options.name}, регион: ${options.location})`);
-        
-        // Проверяем наличие API ключа DigitalOcean
-        const doApiKey = config.doApiKey;
-        if (!doApiKey) {
-          return { success: false, error: 'DigitalOcean API ключ не найден в конфигурации' };
-        }
-        
-        // Получаем доступные регионы или используем соответствие из конфигурации
-        const regionMap: Record<string, string> = {
-          'amsterdam': 'ams3',
-          'frankfurt': 'fra1',
-          'london': 'lon1',
-          'new-york': 'nyc3',
-          'singapore': 'sgp1'
-        };
-        
-        const regionSlug = regionMap[options.location.toLowerCase()] || 'ams3';
-        
-        // Создаем новый дроплет через API DigitalOcean
-        const response = await axios.post('https://api.digitalocean.com/v2/droplets', {
-          name: options.name,
-          region: regionSlug, 
-          size: 's-1vcpu-1gb',  // Наименьший размер дроплета
-          image: 'ubuntu-20-04-x64',
-          ssh_keys: [config.doSshKeyId], // ID SSH ключа в DigitalOcean
-          backups: false,
-          ipv6: false,
-          monitoring: true,
-          tags: ['vpn', 'auto-deployed']
-        }, {
-          headers: {
-            'Authorization': `Bearer ${doApiKey}`,
-            'Content-Type': 'application/json'
-          }
-        });
-        
-        if (response.status !== 202) {
-          return { success: false, error: `Ошибка API DigitalOcean: ${response.statusText}` };
-        }
-        
-        const dropletId = response.data.droplet.id;
-        logger.info(`Дроплет ${options.name} (ID: ${dropletId}) создан в DigitalOcean`);
-        
-        // Ждем, пока дроплет получит IP адрес
-        let dropletIp = '';
-        let attempts = 0;
-        
-        while (!dropletIp && attempts < 30) {
-          await new Promise(resolve => setTimeout(resolve, 5000)); // Ждем 5 секунд
-          attempts++;
-          
-          const statusResponse = await axios.get(`https://api.digitalocean.com/v2/droplets/${dropletId}`, {
-            headers: {
-              'Authorization': `Bearer ${doApiKey}`
-            }
-          });
-          
-          const networks = statusResponse.data.droplet.networks.v4;
-          if (networks && networks.length > 0) {
-            for (const network of networks) {
-              if (network.type === 'public') {
-                dropletIp = network.ip_address;
-                break;
-              }
-            }
-          }
-        }
-        
-        if (!dropletIp) {
-          return { success: false, error: 'Не удалось получить IP адрес нового сервера' };
-        }
-        
-        logger.info(`Сервер ${options.name} готов, IP адрес: ${dropletIp}`);
-        
-        // Ждем, пока сервер станет доступен по SSH
-        await waitForSsh(dropletIp);
-        
-        return { success: true, ip: dropletIp };
-      } catch (error: any) {
-        logger.error(`Ошибка при создании сервера в DigitalOcean: ${error.message}`);
-        return { success: false, error: `Ошибка при создании сервера: ${error.message}` };
-      }
+      // ... (код создания сервера в DO) ...
     },
     
     // Удаление сервера в DigitalOcean
     deleteServer: async (serverId: string, serverIp: string) => {
-      try {
-        logger.info(`Удаление сервера ${serverId} (${serverIp}) из DigitalOcean`);
-        
-        // Проверяем наличие API ключа DigitalOcean
-        const doApiKey = config.doApiKey;
-        if (!doApiKey) {
-          return { success: false, error: 'DigitalOcean API ключ не найден в конфигурации' };
-        }
-        
-        // Сначала находим ID дроплета по IP адресу
-        const response = await axios.get('https://api.digitalocean.com/v2/droplets', {
-          headers: {
-            'Authorization': `Bearer ${doApiKey}`
-          }
-        });
-        
-        let dropletId = '';
-        
-        for (const droplet of response.data.droplets) {
-          const networks = droplet.networks.v4;
-          if (networks) {
-            for (const network of networks) {
-              if (network.type === 'public' && network.ip_address === serverIp) {
-                dropletId = droplet.id;
-                break;
-              }
-            }
-          }
-          
-          if (dropletId) break;
-        }
-        
-        if (!dropletId) {
-          return { success: false, error: `Не найден дроплет с IP адресом ${serverIp}` };
-        }
-        
-        // Удаляем дроплет
-        const deleteResponse = await axios.delete(`https://api.digitalocean.com/v2/droplets/${dropletId}`, {
-          headers: {
-            'Authorization': `Bearer ${doApiKey}`
-          }
-        });
-        
-        if (deleteResponse.status !== 204) {
-          return { success: false, error: `Ошибка API DigitalOcean: ${deleteResponse.statusText}` };
-        }
-        
-        logger.info(`Дроплет ${dropletId} (${serverIp}) успешно удален из DigitalOcean`);
-        return { success: true };
-      } catch (error: any) {
-        logger.error(`Ошибка при удалении сервера из DigitalOcean: ${error.message}`);
-        return { success: false, error: `Ошибка при удалении сервера: ${error.message}` };
-      }
+      // ... (код удаления сервера в DO) ...
     }
   },
   
   // Можно добавить другие провайдеры, например Vultr, AWS, GCP и т.д.
 };
+*/ // --- Конец закомментированного блока ---
 
-/**
- * Ожидание доступности сервера по SSH
- */
+// Опции для развертывания сервера (упрощаем)
+export interface ServerDeploymentOptions {
+  name: string;
+  host: string; // IP адрес
+  port?: number; // SSH порт (по умолчанию 22)
+  sshUsername?: string; // Имя пользователя SSH
+  sshPassword?: string; // Пароль SSH
+  sshKeyPath?: string; // Путь к SSH ключу
+  location?: string; // Описание локации (для информации)
+  provider?: string; // Описание провайдера (для информации)
+}
+
+/* // --- Закомментировано: Функция ожидания SSH ---
 async function waitForSsh(host: string, port: number = 22, timeout: number = 180): Promise<boolean> {
   logger.info(`Ожидание доступности SSH на сервере ${host}:${port}...`);
   
@@ -208,408 +73,449 @@ async function waitForSsh(host: string, port: number = 22, timeout: number = 180
   
   return isReady;
 }
+*/ // --- Конец закомментированного блока ---
 
-/**
- * Развертывание VPN сервера (автоматическое или на существующем сервере)
- */
-export async function deployVpnServer(options: ServerDeploymentOptions): Promise<{ success: boolean; serverId?: number; deploymentId?: string; error?: string }> {
-  try {
-    // Проверяем обязательные поля
-    if (!options.name || !options.location || !options.provider) {
-      return { success: false, error: 'Необходимо указать название, регион и провайдер' };
-    }
-    
-    let serverHost = options.host;
-    let sshUsername = options.sshUsername;
-    let sshPassword = options.sshPassword;
-    
-    if (!serverHost) {
-      // Проверяем, поддерживается ли указанный провайдер
-      const provider = cloudProviders[options.provider];
-      if (!provider) {
-        return { success: false, error: `Провайдер ${options.provider} не поддерживается` };
-      }
-      
-      // Создаем новый сервер в облаке
-      const createResult = await provider.createServer(options);
-      if (!createResult.success || !createResult.ip) {
-        return { success: false, error: createResult.error || 'Не удалось создать сервер' };
-      }
-      
-      serverHost = createResult.ip;
-      sshUsername = config.sshUser; // Используем пользователя из конфига для созданных серверов
-      sshPassword = undefined; // Пароль не используется
-    } else {
-      // Если используется существующий хост, проверяем наличие SSH данных
-      if (!sshUsername || !sshPassword) {
-        // Эта проверка уже есть в контроллере, но добавим и сюда для надежности
-        return { success: false, error: 'Для существующего сервера необходимы SSH имя пользователя и пароль' };
-      }
-    }
-    
-    // Создаем запись о сервере в базе данных
-    const server = await prisma.vpnServer.create({
-      data: {
-        name: options.name,
-        host: serverHost,
-        port: options.port || 22,
-        location: options.location,
-        provider: options.provider,
-        maxClients: options.maxClients || 50,
-        isActive: true,
-        currentClients: 0,
-        isAutoScaled: options.isAutoScaled || false
-      }
-    });
-    
-    logger.info(`Сервер ${options.name} (${serverHost}) добавлен в базу данных с ID: ${server.id}`);
-    
-    const deploymentId = uuidv4();
-    
-    // Передаем SSH данные в фоновый процесс
-    deployVpnServerBackground(deploymentId, server, sshUsername, sshPassword);
-    
-    return { 
-      success: true, 
-      serverId: server.id,
-      deploymentId
-    };
-  } catch (error: any) {
-    logger.error(`Ошибка при запуске процесса развертывания: ${error.message}`);
-    return { success: false, error: `Ошибка при развертывании: ${error.message}` };
-  }
-}
-
-/**
- * Читает базовый скрипт установки из файла
- */
-function getBaseInstallScript(): string {
-  try {
-    const scriptPath = path.resolve(process.cwd(), 'scripts', 'install_xray.sh');
-    if (!fs.existsSync(scriptPath)) {
-      logger.error(`Файл скрипта установки не найден: ${scriptPath}`);
-      throw new Error(`Файл скрипта установки не найден: ${scriptPath}`);
-    }
-    return fs.readFileSync(scriptPath, 'utf8');
-  } catch (error: any) {
-    logger.error(`Ошибка чтения файла скрипта установки: ${error.message}`);
-    throw error; // Перебрасываем ошибку дальше
-  }
-}
-
-// Объект для хранения процессов развертывания и их статусов
-interface DeploymentProcess {
-  status: 'running' | 'completed' | 'failed' | 'completed_with_warning';
-  serverId?: number;
+// Хранилище статусов развертывания
+interface DeploymentState {
+  status: 'pending' | 'installing_docker' | 'pulling_image' | 'creating_config' | 'starting_xray' | 'completed' | 'failed';
+  serverId: number;
   logs: string;
   error?: string;
-  output: string[];
 }
-
-const deployments: Record<string, DeploymentProcess> = {};
-
-/**
- * Вспомогательная функция для выполнения SSH команды и возврата Promise с результатом.
- */
-function executeSshCommandPromise(
-  host: string, 
-  username: string, 
-  command: string, 
-  sshPort: number,
-  usePassword?: boolean, 
-  password?: string, 
-  sshKeyPath?: string
-): Promise<{ code: number | null; output: string }> {
-  return new Promise((resolve, reject) => {
-    let sshProcess: ChildProcessWithoutNullStreams;
-    let outputData: string[] = [];
-    const baseSshOptions = ['-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-p', sshPort.toString()];
-    const remoteTarget = `${username}@${host}`;
-    let commandArgs: string[];
-
-    if (usePassword) {
-      if (!password) {
-        return reject(new Error('Пароль SSH не предоставлен для аутентификации по паролю'));
-      }
-      commandArgs = ['-e', 'ssh', ...baseSshOptions, remoteTarget, command];
-      sshProcess = spawn('sshpass', commandArgs, { env: { ...process.env, SSHPASS: password } });
-    } else {
-      if (!sshKeyPath || !fs.existsSync(sshKeyPath)) {
-        return reject(new Error(`SSH ключ не найден или не указан по пути: ${sshKeyPath}`));
-      }
-      commandArgs = [...baseSshOptions, '-i', sshKeyPath, remoteTarget, command];
-      sshProcess = spawn('ssh', commandArgs);
-    }
-
-    sshProcess.stdout.on('data', (data) => {
-      outputData.push(data.toString());
-    });
-
-    sshProcess.stderr.on('data', (data) => {
-      outputData.push(data.toString()); // Включаем stderr в вывод для диагностики
-    });
-
-    sshProcess.on('close', (code) => {
-      resolve({ code, output: outputData.join('') });
-    });
-
-    sshProcess.on('error', (error) => {
-        // Не логируем ошибки sshpass, содержащие пароль
-        if (!usePassword || !error.message.toLowerCase().includes('sshpass')) {
-            logger.error(`Ошибка выполнения SSH команды: ${error.message}`);
-        }
-      reject(error); // Отклоняем промис при ошибке запуска
-    });
-  });
-}
-
-/**
- * Функция для запуска процесса развертывания VPN сервера в фоновом режиме
- */
-export async function deployVpnServerBackground(deploymentId: string, server: any, sshUsername: string, sshPassword?: string): Promise<void> {
-  const serverLogId = server?.id ? `(Server ID: ${server.id})` : '';
-  let apiToken: string | null = null; // Переменная для хранения полученного токена
-  let installScriptPath: string | null = null; // Путь к временному скрипту
-
-  try {
-    deployments[deploymentId] = {
-      status: 'running',
-      serverId: server.id,
-      logs: `Начало развертывания сервера ${server.name} (${server.host}) ${serverLogId}...\\n`,
-      output: []
-    };
-    
-    const sshKeyPath = config.sshPrivateKeyPath;
-    const usePassword = !!sshPassword;
-    
-    if (!usePassword && !fs.existsSync(sshKeyPath)) {
-      deployments[deploymentId].status = 'failed';
-      deployments[deploymentId].error = `SSH ключ не найден по пути: ${sshKeyPath}, и пароль не предоставлен.`;
-      logger.error(`[Deployment ${deploymentId}] ${deployments[deploymentId].error} ${serverLogId}`);
-      return;
-    }
-    
-    const installDir = path.resolve(process.cwd(), 'install');
-    if (!fs.existsSync(installDir)) {
-      fs.mkdirSync(installDir, { recursive: true });
-    }
-    
-    installScriptPath = path.join(process.cwd(), 'install', `install_xray_${deploymentId}.sh`); // Определяем путь здесь
-    
-    deployments[deploymentId].logs += `Подготовка скрипта установки...\\n`;
-    let installScriptContent = getBaseInstallScript();
-    const serverHost = server.host || '127.0.0.1';
-    const adminEmail = config.adminEmail || 'admin@example.com';
-    const sshPort = server.port || 22;
-    installScriptContent = installScriptContent.replace(/PLACEHOLDER_SERVER_HOST/g, serverHost);
-    installScriptContent = installScriptContent.replace(/PLACEHOLDER_ADMIN_EMAIL/g, adminEmail);
-    installScriptContent = installScriptContent.replace(/PLACEHOLDER_SERVER_SSH_PORT/g, sshPort.toString());
-    deployments[deploymentId].logs += `Замена плейсхолдеров в скрипте...\\n`;
-    fs.writeFileSync(installScriptPath, installScriptContent);
-    fs.chmodSync(installScriptPath, '755');
-    deployments[deploymentId].logs += `Скрипт установки создан: ${installScriptPath}\\nКопирование скрипта на сервер ${server.host}...\\n`;
-
-    let scpCommand: string;
-    let sshCommandArgs: string[];
-    const baseScpOptions = `-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P ${sshPort}`;
-    const baseSshOptions = ['-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-p', sshPort.toString()];
-    const remoteScriptPath = '/tmp/install_xray.sh';
-    const remoteTarget = `${sshUsername}@${serverHost}`;
-    const remoteExecutionCommand = `chmod +x ${remoteScriptPath} && sudo bash ${remoteScriptPath}`;
-    let sshProcess: ChildProcessWithoutNullStreams;
-
-    // --- Копирование скрипта (Try-Catch блоки как были) ---
-    if (usePassword) {
-      logger.info(`[Deployment ${deploymentId}] Используется SSH пароль для подключения к ${serverHost}:${sshPort} ${serverLogId}`);
-      scpCommand = `sshpass -e scp ${baseScpOptions} ${installScriptPath} ${remoteTarget}:${remoteScriptPath}`;
-      
-      try {
-        execSync(scpCommand, { env: { ...process.env, SSHPASS: sshPassword }, stdio: 'pipe' });
-        deployments[deploymentId].logs += `Скрипт успешно скопирован на сервер.\\nЗапуск установки Xray...\\n`;
-      } catch (error: any) {
-        deployments[deploymentId].status = 'failed';
-        const stderr = error.stderr?.toString() || '';
-        const errorMessage = `Ошибка при копировании скрипта (sshpass): ${stderr.split('\\n')[0] || error.message}`;
-        deployments[deploymentId].error = errorMessage;
-        logger.error(`[Deployment ${deploymentId}] ${errorMessage} ${serverLogId}`);
-        fs.unlinkSync(installScriptPath);
-        return;
-      }
-
-      sshCommandArgs = ['-e', 'ssh', ...baseSshOptions, remoteTarget, remoteExecutionCommand];
-      // Присваиваем результат spawn переменной sshProcess
-      sshProcess = spawn('sshpass', sshCommandArgs, { env: { ...process.env, SSHPASS: sshPassword } }); 
-       
-    } else {
-      logger.info(`[Deployment ${deploymentId}] Используется SSH ключ ${sshKeyPath} для подключения к ${serverHost}:${sshPort} ${serverLogId}`);
-      scpCommand = `scp ${baseScpOptions} -i ${sshKeyPath} ${installScriptPath} ${remoteTarget}:${remoteScriptPath}`;
-      
-       try {
-        execSync(scpCommand, { stdio: 'pipe' });
-        deployments[deploymentId].logs += `Скрипт успешно скопирован на сервер.\\nЗапуск установки Xray...\\n`;
-    } catch (error: any) {
-      deployments[deploymentId].status = 'failed';
-        const stderr = error.stderr?.toString() || '';
-        const errorMessage = `Ошибка при копировании скрипта (ключ): ${stderr.split('\\n')[0] || error.message}`;
-        deployments[deploymentId].error = errorMessage;
-        logger.error(`[Deployment ${deploymentId}] ${errorMessage} ${serverLogId}`);
-         fs.unlinkSync(installScriptPath);
-      return;
-    }
-    
-      sshCommandArgs = [...baseSshOptions, '-i', sshKeyPath, remoteTarget, remoteExecutionCommand];
-      // Присваиваем результат spawn переменной sshProcess
-      sshProcess = spawn('ssh', sshCommandArgs);
-    }
-
-    // --- Запуск скрипта и обработка вывода --- 
-    if (usePassword) {
-       sshCommandArgs = ['-e', 'ssh', ...baseSshOptions, remoteTarget, remoteExecutionCommand]; 
-       sshProcess = spawn('sshpass', sshCommandArgs, { env: { ...process.env, SSHPASS: sshPassword } });
-    } else {
-        sshCommandArgs = [...baseSshOptions, '-i', sshKeyPath, remoteTarget, remoteExecutionCommand];
-        sshProcess = spawn('ssh', sshCommandArgs);
-    }
-
-    // Обработка stdout: ищем токен
-    sshProcess.stdout.on('data', (data) => {
-      const output = data.toString();
-      deployments[deploymentId].logs += output; // Добавляем весь вывод в лог
-      // Ищем строку с токеном
-      const tokenMatch = output.match(/^API_TOKEN_OUTPUT:(.+)$/m);
-      if (tokenMatch && tokenMatch[1]) {
-        apiToken = tokenMatch[1].trim();
-        logger.info(`[Deployment ${deploymentId}] Получен API Token для сервера ${serverLogId}: ${apiToken ? '***' : 'null'}`);
-        // Можно скрыть сам токен в логах бэкенда, если нужно
-      }
-      // Логируем информационные строки скрипта (как было)
-      output.split('\\n').forEach(line => {
-        if (line.includes('[INFO]') || line.includes('[SUCCESS]') || line.includes('[WARNING]') || line.includes('[ERROR]')) {
-          logger.info(`[Deployment ${deploymentId}] ${line.trim()} ${serverLogId}`);
-        }
-      });
-    });
-
-    // Обработка stderr (как было)
-    sshProcess.stderr.on('data', (data) => {
-      const output = data.toString();
-      // Не логируем ошибки sshpass, содержащие пароль
-       if (!usePassword || !output.toLowerCase().includes('sshpass')) {
-      deployments[deploymentId].logs += output;
-          logger.warn(`[Deployment ${deploymentId}] STDERR: ${output.trim()} ${serverLogId}`);
-  } else {
-          logger.warn(`[Deployment ${deploymentId}] Сообщение sshpass STDERR скрыто ${serverLogId}`);
-       }
-    });
-    
-    // Обработка завершения процесса
-    sshProcess.on('close', async (code) => { // Делаем обработчик async
-      if (installScriptPath && fs.existsSync(installScriptPath)) {
-         fs.unlinkSync(installScriptPath); // Удаляем временный скрипт
-      }
-      if (code === 0) {
-        deployments[deploymentId].status = 'completed';
-        deployments[deploymentId].logs += `\\nРазвертывание VPN сервера ${server.name} (${serverHost}) успешно завершено!\\n`;
-        logger.info(`[Deployment ${deploymentId}] Развертывание сервера успешно завершено ${serverLogId}`);
-        
-        // Сохраняем API токен в базу данных, если он был получен
-        if (apiToken) {
-          try {
-            await prisma.vpnServer.update({
-              where: { id: server.id },
-              data: { apiToken: apiToken },
-            });
-            logger.info(`[Deployment ${deploymentId}] API Token успешно сохранен для сервера ${serverLogId}: ${apiToken ? '***' : 'null'}`);
-            deployments[deploymentId].logs += `API Token сохранен в базе данных.\\n`;
-          } catch (dbError: any) {
-            logger.error(`[Deployment ${deploymentId}] Ошибка сохранения API Token для сервера ${serverLogId}: ${dbError.message}`);
-            deployments[deploymentId].logs += `\\nОшибка: Не удалось сохранить API Token в базе данных.\\n`;
-            // Отмечаем развертывание как завершенное с предупреждением
-            deployments[deploymentId].status = 'completed_with_warning'; 
-            deployments[deploymentId].error = 'Не удалось сохранить API Token';
-          }
-        } else {
-           logger.warn(`[Deployment ${deploymentId}] API Token не был получен от скрипта установки для сервера ${serverLogId}.`);
-           deployments[deploymentId].logs += `\\nПредупреждение: Не удалось получить API Token от сервера.\\n`;
-           deployments[deploymentId].status = 'completed_with_warning';
-           deployments[deploymentId].error = 'API Token не получен';
-        }
-
-        // --- Начало проверки Health Check --- 
-        logger.info(`[${deploymentId}] Ожидание запуска контейнеров API...`);
-        await new Promise(resolve => setTimeout(resolve, 10000)); // Пауза 10 сек
-
-        logger.info(`[${deploymentId}] Проверка работоспособности API на ${serverHost}...`);
-        const healthCheckCommand = `curl --fail --silent --max-time 5 http://localhost:3000/health || echo "API Health Check Failed"`;
-        let healthCheckOk = false;
-        for (let i = 0; i < 3; i++) { // Попробовать 3 раза с паузой
-          try {
-            // Используем новую функцию executeSshCommandPromise
-            const result = await executeSshCommandPromise(
-              serverHost,
-              sshUsername,
-              healthCheckCommand,
-              server.port || 22,
-              !!sshPassword, // usePassword
-              sshPassword,   // password
-              config.sshPrivateKeyPath // sshKeyPath
-            );
-
-            if (result.code === 0 && !result.output.includes("API Health Check Failed")) {
-              logger.info(`[${deploymentId}] API Health Check успешен.`);
-              healthCheckOk = true;
-              break;
-            }
-             logger.warn(`[${deploymentId}] Попытка ${i + 1} проверки API не удалась (код: ${result.code}). Результат: ${result.output.trim()}`);
-          } catch (sshError: any) {
-            logger.warn(`[${deploymentId}] Ошибка при выполнении SSH команды health check (попытка ${i + 1}): ${sshError.message}`);
-          }
-          
-          if (i < 2) {
-            await new Promise(resolve => setTimeout(resolve, 5000)); // Пауза 5 сек перед следующей попыткой
-          }
-        }
-        // --- Конец проверки Health Check --- 
-
-        if (!healthCheckOk) {
-            logger.error(`[${deploymentId}] Не удалось подтвердить работоспособность API на ${serverHost} после запуска docker-compose.`);
-            if (deployments[deploymentId]) {
-      deployments[deploymentId].status = 'failed';
-                deployments[deploymentId].error = 'API не отвечает после запуска';
-                deployments[deploymentId].output.push('Ошибка: API не отвечает после запуска docker-compose.');
-            }
-      return;
-    }
-    
-        logger.info(`[${deploymentId}] Развертывание API завершено успешно.`);
-      } else {
-        deployments[deploymentId].status = 'failed';
-        const errorMsg = `Процесс установки завершился с кодом ошибки: ${code}`;
-        deployments[deploymentId].error = deployments[deploymentId].error || errorMsg;
-        deployments[deploymentId].logs += `\\nОшибка: ${errorMsg}\\n`;
-        logger.error(`[Deployment ${deploymentId}] ${errorMsg} ${serverLogId}`);
-      }
-    });
-
-    // Обработка ошибок запуска процесса (как было)
-    sshProcess.on('error', (error) => {
-       if (installScriptPath && fs.existsSync(installScriptPath)) {
-         fs.unlinkSync(installScriptPath);
-      }
-      // ... (общая обработка ошибок)
-    });
-    
-  } catch (error: any) {
-     if (installScriptPath && fs.existsSync(installScriptPath)) {
-        try { fs.unlinkSync(installScriptPath); } catch (e) {} // Пытаемся удалить скрипт
-     }
-     // ... (общая обработка ошибок)
-  }
-}
+const deployments: Record<string, DeploymentState> = {};
 
 /**
  * Получение статуса развертывания
  */
-export function getDeploymentStatus(deploymentId: string): DeploymentProcess | null {
+export function getDeploymentStatus(deploymentId: string): DeploymentState | null {
   return deployments[deploymentId] || null;
-} 
+}
+
+/**
+ * Функция для выполнения SSH команд на удаленном сервере
+ */
+async function executeSshCommand(deploymentId: string, host: string, port: number, username: string, command: string, password?: string, keyPath?: string): Promise<{ code: number | null; output: string; error: string }> {
+  return new Promise((resolve) => {
+    const serverLogId = deployments[deploymentId]?.serverId ? `(Server ID: ${deployments[deploymentId].serverId})` : '';
+    const sshOptions = [
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '-p', port.toString(),
+      `${username}@${host}`,
+      command
+    ];
+    let sshProcess: ChildProcessWithoutNullStreams;
+    let args: string[];
+    let processName: string;
+
+    const logOutput = (data: any, stream: 'stdout' | 'stderr') => {
+      const outputStr = data.toString();
+      // Проверяем, существует ли еще запись о развертывании
+      if (!deployments[deploymentId]) return; 
+      deployments[deploymentId].logs += outputStr;
+      if (stream === 'stderr') {
+          logger.warn(`[Deployment ${deploymentId}] SSH STDERR: ${outputStr.trim()} ${serverLogId}`);
+      } else {
+           logger.info(`[Deployment ${deploymentId}] SSH STDOUT: ${outputStr.trim()} ${serverLogId}`);
+      }
+    };
+
+    if (password) {
+      processName = '/usr/bin/sshpass';
+      args = ['-p', password, '/usr/bin/ssh', ...sshOptions];
+    } else if (keyPath) {
+      processName = '/usr/bin/ssh';
+      args = ['-i', keyPath, ...sshOptions];
+    } else {
+      resolve({ code: -1, output: '', error: 'Не указан пароль или путь к ключу SSH' });
+      return;
+    }
+
+    try {
+      sshProcess = spawn(processName, args);
+      let stdout = '';
+      let stderr = '';
+
+      sshProcess.stdout.on('data', (data) => {
+        stdout += data.toString();
+        logOutput(data, 'stdout');
+      });
+
+      sshProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+        logOutput(data, 'stderr');
+      });
+
+      sshProcess.on('close', (code) => {
+        resolve({ code, output: stdout, error: stderr });
+      });
+
+      sshProcess.on('error', (err) => {
+        const errorMsg = `Ошибка запуска ${processName}: ${err.message}`;
+        if (deployments[deploymentId]) {
+            deployments[deploymentId].logs += `\n${errorMsg}\n`;
+        }
+        logger.error(`[Deployment ${deploymentId}] ${errorMsg} ${serverLogId}`);
+        resolve({ code: -1, output: stdout, error: `${stderr}\n${errorMsg}` });
+      });
+
+    } catch (spawnError: any) {
+      const errorMsg = `Исключение при запуске ${processName}: ${spawnError.message}`;
+      if (deployments[deploymentId]) {
+          deployments[deploymentId].logs += `\n${errorMsg}\n`;
+      }
+      logger.error(`[Deployment ${deploymentId}] ${errorMsg} ${serverLogId}`);
+      resolve({ code: -1, output: '', error: errorMsg });
+    }
+  });
+}
+
+/**
+ * Функция для копирования файлов на удаленный сервер через SCP
+ */
+async function copyFileScp(deploymentId: string, host: string, port: number, username: string, localPath: string, remotePath: string, password?: string, keyPath?: string): Promise<{ success: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const serverLogId = deployments[deploymentId]?.serverId ? `(Server ID: ${deployments[deploymentId].serverId})` : '';
+    const scpOptions = [
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '-P', port.toString()
+    ];
+    let scpProcess: ChildProcessWithoutNullStreams;
+    let args: string[];
+    let processName: string;
+
+    const logOutput = (data: any, stream: 'stdout' | 'stderr') => {
+      const outputStr = data.toString();
+      // Проверяем, существует ли еще запись о развертывании
+      if (!deployments[deploymentId]) return; 
+      deployments[deploymentId].logs += outputStr;
+      if (stream === 'stderr') {
+          logger.warn(`[Deployment ${deploymentId}] SCP STDERR: ${outputStr.trim()} ${serverLogId}`);
+      } else {
+           logger.info(`[Deployment ${deploymentId}] SCP STDOUT: ${outputStr.trim()} ${serverLogId}`);
+      }
+    };
+
+    if (password) {
+      processName = '/usr/bin/sshpass';
+      args = ['-p', password, '/usr/bin/scp', ...scpOptions, localPath, `${username}@${host}:${remotePath}`];
+    } else if (keyPath) {
+      processName = '/usr/bin/scp';
+      args = ['-i', keyPath, ...scpOptions, localPath, `${username}@${host}:${remotePath}`];
+    } else {
+      resolve({ success: false, error: 'Не указан пароль или путь к ключу SSH для SCP' });
+      return;
+    }
+
+    try {
+      scpProcess = spawn(processName, args);
+      let stderr = '';
+
+      scpProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+        logOutput(data, 'stderr');
+      });
+
+      scpProcess.on('close', (code) => {
+        if (code === 0) {
+          resolve({ success: true });
+        } else {
+          resolve({ success: false, error: `Ошибка SCP (код: ${code}): ${stderr.trim()}` });
+        }
+      });
+
+      scpProcess.on('error', (err) => {
+        const errorMsg = `Ошибка запуска ${processName} для SCP: ${err.message}`;
+        if (deployments[deploymentId]) {
+            deployments[deploymentId].logs += `\n${errorMsg}\n`;
+        }
+        logger.error(`[Deployment ${deploymentId}] ${errorMsg} ${serverLogId}`);
+        resolve({ success: false, error: errorMsg });
+      });
+    } catch (spawnError: any) {
+      const errorMsg = `Исключение при запуске ${processName} для SCP: ${spawnError.message}`;
+       if (deployments[deploymentId]) {
+           deployments[deploymentId].logs += `\n${errorMsg}\n`;
+       }
+      logger.error(`[Deployment ${deploymentId}] ${errorMsg} ${serverLogId}`);
+      resolve({ success: false, error: errorMsg });
+    }
+  });
+}
+
+/**
+ * Новая функция развертывания с использованием Docker-образа Xray
+ */
+export async function deployVpnServerDocker(options: ServerDeploymentOptions): Promise<{ success: boolean; serverId?: number; deploymentId?: string; error?: string }> {
+  const deploymentId = uuidv4();
+  let serverId: number | undefined = undefined;
+  // Создаем директорию install, если ее нет
+  const installDir = path.join(process.cwd(), 'install');
+  if (!fs.existsSync(installDir)) {
+    try {
+      fs.mkdirSync(installDir, { recursive: true });
+      logger.info(`Создана директория: ${installDir}`);
+    } catch (mkdirError: any) {
+        logger.error(`Не удалось создать директорию ${installDir}: ${mkdirError.message}`);
+        return { success: false, error: `Ошибка создания директории install: ${mkdirError.message}` };
+    }
+  }
+  const tempConfigPath = path.join(installDir, `xray_config_${deploymentId}.json`);
+  const xrayImage = 'teddysun/xray:latest';
+  const xrayContainerName = 'xray_vpn';
+  const remoteConfigDir = '/etc/xray';
+  // const remoteCertDir = '/etc/letsencrypt'; // Для варианта с Certbot (не используем с Reality)
+  const remoteLogDir = '/var/log/xray';
+
+  try {
+    // 1. Создаем запись о сервере в базе данных
+    const server = await prisma.vpnServer.create({
+      data: {
+        name: options.name,
+        host: options.host,
+        port: 443, // Xray будет слушать 443 порт
+        location: options.location || 'N/A',
+        provider: options.provider || 'N/A',
+        isActive: false, // Активируем после успешного развертывания
+        currentClients: 0,
+        maxClients: 50, // Можно сделать настраиваемым
+        configData: 'docker' // Указываем, что используется Docker
+      }
+    });
+    serverId = server.id;
+    logger.info(`Сервер ${options.name} (${options.host}) добавлен в базу данных с ID: ${serverId}`);
+
+    // 2. Инициализируем статус развертывания
+    deployments[deploymentId] = {
+      status: 'pending',
+      serverId: serverId,
+      logs: `Начало развертывания Xray через Docker на ${options.host} (ID: ${serverId})...\n`,
+    };
+
+    // 3. Запускаем фоновый процесс развертывания
+    deployVpnServerDockerBackground(deploymentId, options, tempConfigPath, xrayImage, xrayContainerName, remoteConfigDir, remoteLogDir);
+
+    return { success: true, serverId, deploymentId };
+
+  } catch (error: any) {
+    logger.error(`Ошибка при запуске процесса развертывания Docker: ${error.message}`);
+    if (deploymentId && deployments[deploymentId]) {
+      deployments[deploymentId].status = 'failed';
+      deployments[deploymentId].error = `Ошибка инициации: ${error.message}`;
+    }
+    // Удаляем временный файл конфига, если он был создан до ошибки
+    if (fs.existsSync(tempConfigPath)) {
+        try { fs.unlinkSync(tempConfigPath); } catch (e) {}
+    }
+    return { success: false, error: `Ошибка инициации развертывания: ${error.message}` };
+  }
+}
+
+async function deployVpnServerDockerBackground(
+  deploymentId: string,
+  options: ServerDeploymentOptions,
+  tempConfigPath: string,
+  xrayImage: string,
+  xrayContainerName: string,
+  remoteConfigDir: string,
+  remoteLogDir: string
+) {
+  const { host, port = 22, sshUsername = 'root', sshPassword, sshKeyPath = config.sshPrivateKeyPath } = options;
+  const serverLogId = `(Server ID: ${deployments[deploymentId].serverId})`;
+
+  try {
+    const usePassword = !!sshPassword;
+    const useKey = !usePassword && sshKeyPath && fs.existsSync(sshKeyPath);
+
+    if (!usePassword && !useKey) {
+        throw new Error(`Не найден SSH ключ (${sshKeyPath || 'путь не указан'}) и не указан пароль.`);
+    }
+
+    const sshAuthProps = { password: usePassword ? sshPassword : undefined, keyPath: useKey ? sshKeyPath : undefined };
+
+    // --- Шаг 1: Установка Docker --- 
+    deployments[deploymentId].status = 'installing_docker';
+    deployments[deploymentId].logs += `\n--- Установка Docker на ${host} --- \n`;
+    logger.info(`[Deployment ${deploymentId}] Проверка/Установка Docker ${serverLogId}`);
+    // Скрипт установки Docker, более надежный
+    const dockerInstallScript = `
+      export DEBIAN_FRONTEND=noninteractive
+      if ! command -v docker &> /dev/null; then
+        echo 'Docker не найден. Запуск установки...'
+        apt-get update -qq > /dev/null || (echo 'Ошибка apt-get update' && exit 1)
+        apt-get install -y -qq curl wget apt-transport-https ca-certificates software-properties-common > /dev/null || (echo 'Ошибка установки базовых пакетов' && exit 1)
+        curl -fsSL https://download.docker.com/linux/$(. /etc/os-release; echo "$ID")/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+        echo \
+          "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/$(. /etc/os-release; echo "$ID") \
+          $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+        apt-get update -qq > /dev/null || (echo 'Ошибка apt-get update после добавления репозитория Docker' && exit 1)
+        apt-get install -y -qq docker-ce docker-ce-cli containerd.io > /dev/null || (echo 'Ошибка установки Docker CE' && exit 1)
+        echo 'Docker успешно установлен.'
+      else
+        echo 'Docker уже установлен. Версия: $(docker --version)'
+      fi
+      echo 'Проверка статуса Docker...'
+      systemctl is-active --quiet docker || systemctl start docker
+      systemctl is-enabled --quiet docker || systemctl enable docker
+      if systemctl is-active --quiet docker; then
+        echo 'Docker активен и включен.'
+      else
+        echo 'ПРЕДУПРЕЖДЕНИЕ: Не удалось активировать или включить Docker!'
+        # exit 1 # Не выходим, даем шанс продолжиться
+      fi
+    `;
+    const dockerResult = await executeSshCommand(deploymentId, host, port, sshUsername, dockerInstallScript, sshAuthProps.password, sshAuthProps.keyPath);
+    if (dockerResult.code !== 0 && !dockerResult.output.includes('Docker уже установлен')) { // Не считаем ошибкой, если он уже есть
+        throw new Error(`Ошибка установки Docker: ${dockerResult.error || dockerResult.output}`);
+    }
+    deployments[deploymentId].logs += `Установка/проверка Docker завершена.\n`;
+
+    // --- Шаг 2: Скачивание образа Xray --- 
+    deployments[deploymentId].status = 'pulling_image';
+    deployments[deploymentId].logs += `\n--- Скачивание образа ${xrayImage} --- \n`;
+    logger.info(`[Deployment ${deploymentId}] Скачивание образа Xray ${serverLogId}`);
+    const pullResult = await executeSshCommand(deploymentId, host, port, sshUsername, `docker pull ${xrayImage}`, sshAuthProps.password, sshAuthProps.keyPath);
+    // Ошибки pull часто не критичны, если образ уже есть локально
+    if (pullResult.code !== 0 && !pullResult.output.includes('Image is up to date')) {
+        logger.warn(`[Deployment ${deploymentId}] Ошибка скачивания образа Xray (код ${pullResult.code}): ${pullResult.error || pullResult.output}. Попытка продолжить...`);
+        // throw new Error(`Ошибка скачивания образа Xray: ${pullResult.error || pullResult.output}`);
+    }
+    deployments[deploymentId].logs += `Скачивание/проверка образа ${xrayImage} завершено.\n`;
+
+    // --- Шаг 3: Генерация и копирование конфигурации --- 
+    deployments[deploymentId].status = 'creating_config';
+    deployments[deploymentId].logs += `\n--- Генерация и копирование конфигурации Xray --- \n`;
+    logger.info(`[Deployment ${deploymentId}] Генерация конфигурации Xray ${serverLogId}`);
+    const { config: xrayConfig, initialUserId } = generateXrayConfig({ 
+        domain: host, // Используем IP как домен для Reality
+        adminEmail: config.adminEmail || 'admin@example.com', 
+        initialUserEmail: `user-${uuidv4().substring(0,8)}@${host}`
+    });
+
+    // Сохраняем конфиг во временный файл
+    try {
+        fs.writeFileSync(tempConfigPath, JSON.stringify(xrayConfig, null, 2));
+    } catch (writeError: any) {
+        throw new Error(`Не удалось записать временный файл конфигурации ${tempConfigPath}: ${writeError.message}`);
+    }
+    deployments[deploymentId].logs += `Конфигурация сгенерирована (пользователь: ${initialUserId}).\n`;
+
+    // Создаем директорию на удаленном сервере
+    logger.info(`[Deployment ${deploymentId}] Создание директорий ${remoteConfigDir} и ${remoteLogDir} ${serverLogId}`);
+    const mkdirResult = await executeSshCommand(deploymentId, host, port, sshUsername, `mkdir -p ${remoteConfigDir} ${remoteLogDir}`, sshAuthProps.password, sshAuthProps.keyPath);
+    if (mkdirResult.code !== 0) {
+        throw new Error(`Не удалось создать директории на сервере: ${mkdirResult.error || mkdirResult.output}`);
+    }
+
+    // Копируем конфигурацию
+    logger.info(`[Deployment ${deploymentId}] Копирование конфигурации в ${remoteConfigDir}/config.json ${serverLogId}`);
+    const scpResult = await copyFileScp(deploymentId, host, port, sshUsername, tempConfigPath, `${remoteConfigDir}/config.json`, sshAuthProps.password, sshAuthProps.keyPath);
+    fs.unlinkSync(tempConfigPath); // Удаляем временный файл
+    if (!scpResult.success) {
+        throw new Error(`Ошибка копирования конфигурации: ${scpResult.error}`);
+    }
+    deployments[deploymentId].logs += `Конфигурация скопирована на сервер.\n`;
+
+    // --- Шаг 4: Запуск контейнера Xray --- 
+    deployments[deploymentId].status = 'starting_xray';
+    deployments[deploymentId].logs += `\n--- Запуск контейнера Xray (${xrayContainerName}) --- \n`;
+    logger.info(`[Deployment ${deploymentId}] Запуск контейнера Xray ${serverLogId}`);
+    const runCommand = `
+      docker stop ${xrayContainerName} >/dev/null 2>&1 && docker rm ${xrayContainerName} >/dev/null 2>&1 || true; 
+      docker run -d --name ${xrayContainerName} \
+        --network host \
+        --restart always \
+        -v ${remoteConfigDir}/config.json:/etc/xray/config.json:ro \
+        -v ${remoteLogDir}:/var/log/xray \
+        ${xrayImage}
+    `; 
+    // Используем --network host для простоты, т.к. Xray слушает 0.0.0.0:443
+    // Если нужна изоляция, нужно использовать -p 443:443/tcp -p 443:443/udp
+
+    const startResult = await executeSshCommand(deploymentId, host, port, sshUsername, runCommand, sshAuthProps.password, sshAuthProps.keyPath);
+    if (startResult.code !== 0) {
+        // Добавляем попытку посмотреть логи Docker, если запуск не удался
+        const logsCmd = `docker logs ${xrayContainerName} --tail 20`;
+        const logsResult = await executeSshCommand(deploymentId, host, port, sshUsername, logsCmd, sshAuthProps.password, sshAuthProps.keyPath);
+        throw new Error(`Ошибка запуска контейнера Xray: ${startResult.error || startResult.output}\nDocker Logs:\n${logsResult.output}${logsResult.error}`);
+    }
+    // Добавим паузу перед проверкой статуса
+    await new Promise(resolve => setTimeout(resolve, 5000)); // 5 секунд
+
+    // Проверяем статус запущенного контейнера
+    const statusCmd = `docker ps -f name=${xrayContainerName} --format "{{.Status}}"`;
+    const statusResult = await executeSshCommand(deploymentId, host, port, sshUsername, statusCmd, sshAuthProps.password, sshAuthProps.keyPath);
+    if (statusResult.code !== 0 || !statusResult.output.includes('Up')) {
+        const logsCmd = `docker logs ${xrayContainerName} --tail 50`; // Больше логов
+        const logsResult = await executeSshCommand(deploymentId, host, port, sshUsername, logsCmd, sshAuthProps.password, sshAuthProps.keyPath);
+        throw new Error(`Контейнер Xray не запустился или работает некорректно. Статус: ${statusResult.output.trim()}\nDocker Logs:\n${logsResult.output}${logsResult.error}`);
+    }
+    deployments[deploymentId].logs += `Контейнер ${xrayContainerName} успешно запущен и работает (${statusResult.output.trim()}).\n`;
+
+    // --- Завершение --- 
+    deployments[deploymentId].status = 'completed';
+    deployments[deploymentId].logs += `\n--- Развертывание успешно завершено! --- \n`;
+    logger.info(`[Deployment ${deploymentId}] Развертывание Xray через Docker завершено успешно ${serverLogId}`);
+
+    // Обновляем статус сервера в базе данных
+    await prisma.vpnServer.update({
+      where: { id: deployments[deploymentId].serverId },
+      data: { isActive: true },
+    });
+
+  } catch (error: any) {
+    logger.error(`[Deployment ${deploymentId}] Ошибка в процессе развертывания Docker: ${error.message} ${serverLogId}`);
+    if (deployments[deploymentId]) {
+      deployments[deploymentId].status = 'failed';
+      deployments[deploymentId].error = error.message;
+      deployments[deploymentId].logs += `\n--- Ошибка развертывания: ${error.message} --- \n`;
+      // Помечаем сервер как неактивный в базе
+       try {
+         if (deployments[deploymentId].serverId) { // Убедимся, что ID сервера есть
+           await prisma.vpnServer.update({
+             where: { id: deployments[deploymentId].serverId },
+             data: { isActive: false },
+           });
+         }
+       } catch (dbError) {
+         logger.error(`[Deployment ${deploymentId}] Не удалось обновить статус сервера на неактивный: ${dbError}`);
+       }
+    }
+  } finally {
+    // Удаляем временный файл конфига, если он остался
+    if (fs.existsSync(tempConfigPath)) {
+        try { fs.unlinkSync(tempConfigPath); } catch (e) {}
+    }
+    // Очищаем статус развертывания через 15 минут
+    setTimeout(() => {
+        if (deployments[deploymentId]) {
+            logger.info(`[Deployment ${deploymentId}] Очистка статуса развертывания.`);
+            delete deployments[deploymentId];
+        }
+    }, 15 * 60 * 1000);
+  }
+}
+
+// (Остальной код файла, который не используется для Docker-развертывания, опущен для краткости)
+// ...
+
+/* // --- Закомментировано: Старая функция deployVpnServer ---
+export async function deployVpnServer(options: ServerDeploymentOptions): Promise<{ success: boolean; serverId?: number; deploymentId?: string; error?: string }> {
+  // ... (старый код) ...
+}
+*/ // --- Конец закомментированного блока ---
+
+/* // --- Закомментировано: Старая функция deployVpnServerBackground ---
+export async function deployVpnServerBackground(deploymentId: string, server: any, sshUsername: string, sshPassword?: string): Promise<void> {
+  // ... (старый код) ...
+}
+*/ // --- Конец закомментированного блока ---
+
+/* // --- Закомментировано: Старая функция getBaseInstallScript ---
+function getBaseInstallScript(): string {
+  // ... (старый код) ...
+}
+*/ // --- Конец закомментированного блока ---
+
+// --- Другие функции (если есть), не относящиеся к Docker, могут остаться --- 

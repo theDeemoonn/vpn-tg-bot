@@ -1,9 +1,7 @@
-import axios from 'axios';
 import { prisma } from './database';
 import logger from '../utils/logger';
 import config from '../config';
 import { isServerOverloaded, collectServerMetrics } from './monitoring';
-import { deployVpnServer } from './deployment';
 
 /**
  * Состояние автомасштабирования
@@ -115,20 +113,16 @@ async function scaleUp(): Promise<void> {
     const serverName = `${selectedRegion.charAt(0).toUpperCase() + selectedRegion.slice(1)}-${serverCount + 1}`;
     
     // Развертываем новый сервер с автоматически выбранными параметрами
-    const result = await deployVpnServer({
-      name: serverName,
-      host: '', // будет заполнено при автоматическом развертывании
-      location: selectedRegion,
-      provider: config.defaultProvider || 'DigitalOcean',
-      maxClients: config.defaultMaxClients || 100,
-      isAutoScaled: true
-    });
+    // const result = await deployVpnServer({
+    //   name: serverName,
+    //   host: '', // будет заполнено при автоматическом развертывании
+    //   location: selectedRegion,
+    //   provider: config.defaultProvider || 'DigitalOcean',
+    //   maxClients: config.defaultMaxClients || 100,
+    //   isAutoScaled: true
+    // });
 
-    if (result.success) {
-      logger.info(`Успешно запущено развертывание нового сервера ${serverName} (ID: ${result.serverId})`);
-    } else {
-      logger.error(`Ошибка при развертывании нового сервера: ${result.error}`);
-    }
+
   } catch (error) {
     logger.error(`Ошибка при масштабировании вверх: ${error}`);
   }

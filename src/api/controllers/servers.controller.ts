@@ -1,13 +1,10 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../services/database';
 import logger from '../../utils/logger';
-import { execSync, spawn } from 'child_process';
 import * as fs from 'fs';
-import * as path from 'path';
 import config from '../../config';
-import { v4 as uuidv4 } from 'uuid';
-import { 
-  deployVpnServer, 
+import {
+  deployVpnServerDocker,
   getDeploymentStatus as getDeploymentStatusService,
   ServerDeploymentOptions 
 } from '../../services/deployment';
@@ -17,9 +14,7 @@ import {
   getAutoscalingStatus 
 } from '../../services/autoscaling';
 import { 
-  collectServerMetrics, 
-  getServerMetricsHistory, 
-  isServerOverloaded 
+  getServerMetricsHistory,
 } from '../../services/monitoring';
 
 /**
@@ -78,8 +73,10 @@ export const getServerById = async (req: Request, res: Response) => {
       }
     });
     
-    // Получаем конфигурацию сервера
-    const serverConfig = "# Конфигурация сервера\n# Это пример конфигурации\nserver {\n  listen 80;\n  server_name example.com;\n}";
+    // Получаем конфигурацию сервера (можно расширить)
+    const serverConfig = server.configData === 'docker' 
+      ? `Dockerized Xray on ${server.host}`
+      : `# Manual configuration data for ${server.host}`; // Placeholder
     
     res.json({
       ...server,
@@ -93,11 +90,11 @@ export const getServerById = async (req: Request, res: Response) => {
 };
 
 /**
- * Создание нового сервера
+ * Создание нового сервера (ручное, не развертывание)
  */
 export const createServer = async (req: Request, res: Response) => {
   try {
-    const { name, host, port, maxUsers, isActive } = req.body;
+    const { name, host, port, maxUsers, isActive, location, provider } = req.body;
     
     // Проверка обязательных полей
     if (!name || !host || !port) {
@@ -106,9 +103,6 @@ export const createServer = async (req: Request, res: Response) => {
         message: 'Необходимо указать название, хост и порт сервера' 
       });
     }
-
-    const location = req.body.location;
-    const provider = req.body.provider;
     
     // Создаем новый сервер
     const server = await prisma.vpnServer.create({
@@ -116,10 +110,11 @@ export const createServer = async (req: Request, res: Response) => {
         name,
         host,
         port: parseInt(port),
-        location,
-        provider,
+        location: location || 'N/A',
+        provider: provider || 'N/A',
         maxClients: maxUsers ? parseInt(maxUsers) : 100,
-        isActive: typeof isActive === 'boolean' ? isActive : true
+        isActive: typeof isActive === 'boolean' ? isActive : true,
+        configData: 'manual' // Помечаем как ручной
       }
     });
     
@@ -136,7 +131,7 @@ export const createServer = async (req: Request, res: Response) => {
 export const updateServer = async (req: Request, res: Response) => {
   try {
     const serverId = parseInt(req.params.id);
-    const { name, host, port, maxUsers, isActive } = req.body;
+    const { name, host, port, maxClients, isActive, location, provider } = req.body;
     
     // Проверяем существование сервера
     const existingServer = await prisma.vpnServer.findUnique({
@@ -154,7 +149,9 @@ export const updateServer = async (req: Request, res: Response) => {
         name: name !== undefined ? name : undefined,
         host: host !== undefined ? host : undefined,
         port: port !== undefined ? parseInt(port) : undefined,
-        maxClients: maxUsers !== undefined ? parseInt(maxUsers) : undefined,
+        location: location !== undefined ? location : undefined,
+        provider: provider !== undefined ? provider : undefined,
+        maxClients: maxClients !== undefined ? parseInt(maxClients) : undefined,
         isActive: isActive !== undefined ? isActive : undefined
       }
     });
@@ -197,7 +194,15 @@ export const deleteServer = async (req: Request, res: Response) => {
       });
     }
     
-    // Удаляем сервер
+    // TODO: Добавить логику остановки и удаления Docker-контейнера Xray при удалении сервера
+    if (existingServer.configData === 'docker') {
+      logger.warn(`Удаление Docker-сервера ${serverId} пока не реализовано (нужно остановить контейнер)`);
+      // Здесь нужно будет добавить SSH команду для остановки/удаления контейнера
+      // const stopCommand = `docker stop xray_vpn && docker rm xray_vpn`;
+      // await executeSshCommand(...);
+    }
+    
+    // Удаляем сервер из базы
     await prisma.vpnServer.delete({
       where: { id: serverId }
     });
@@ -213,118 +218,106 @@ export const deleteServer = async (req: Request, res: Response) => {
 };
 
 /**
- * Запуск процесса развертывания VPN сервера (обновленная версия)
+ * Запуск процесса развертывания Xray через Docker
  */
 export const deployServer = async (req: Request, res: Response) => {
   try {
-    // Получаем все данные из тела запроса, включая новые поля SSH
+    // Получаем данные из запроса
     const { 
-      name, host, port, location, provider, maxClients, 
-      sshUsername, sshPassword 
+      name, 
+      ip, // Теперь это ip, а не host
+      sshPort, 
+      sshUsername, 
+      sshPassword, 
+      location, // Опционально
+      provider // Опционально
     } = req.body;
     
-    // Проверка обязательных полей
-    // Добавляем проверку для sshUsername и sshPassword, если указан host
-    if (!name || (!host && !location) || !provider) {
+    // Проверка обязательных полей для развертывания
+    if (!name || !ip || !sshUsername ) {
       return res.status(400).json({ 
         error: true, 
-        message: 'Необходимо указать название, хост/локацию и провайдер сервера' 
+        message: 'Необходимо указать название сервера, IP-адрес и имя пользователя SSH' 
       });
     }
-    
-    // Если указан host (развертывание на существующем сервере), 
-    // то sshUsername и sshPassword становятся обязательными
-    if (host && (!sshUsername || !sshPassword)) {
+    // Пароль или ключ должен быть указан (ключ по умолчанию из config)
+    if (!sshPassword && !fs.existsSync(config.sshPrivateKeyPath)) {
         return res.status(400).json({
             error: true,
-            message: 'Для развертывания на существующем сервере необходимо указать SSH имя пользователя и пароль'
+            message: 'Необходимо указать пароль SSH или убедиться, что ключ SSH существует по пути, указанному в конфигурации'
         });
     }
 
-    // Создаем опции для развертывания, передаем SSH данные
+    // Создаем опции для развертывания
     const deployOptions: ServerDeploymentOptions = {
       name,
-      host,
-      port: port ? parseInt(port) : undefined,
-      location: location || '',
-      provider,
-      maxClients: maxClients ? parseInt(maxClients) : undefined,
-      sshUsername, // Передаем sshUsername
-      sshPassword  // Передаем sshPassword
+      host: ip, // Передаем ip как host
+      port: sshPort ? parseInt(sshPort) : 22,
+      sshUsername,
+      sshPassword: sshPassword || undefined,
+      sshKeyPath: config.sshPrivateKeyPath,
+      location: location || 'N/A',
+      provider: provider || 'User Provided'
     };
     
-    // Запускаем процесс развертывания через новый сервис
-    const result = await deployVpnServer(deployOptions);
-    
-    if (!result.success) {
-      logger.error(`Ошибка при развертывании сервера: ${result.error}`);
-      return res.status(400).json({ 
+    // Запускаем процесс развертывания Docker
+    const result = await deployVpnServerDocker(deployOptions);
+
+    if (result.success) {
+      res.status(202).json({
+        message: 'Процесс развертывания Docker запущен',
+        deploymentId: result.deploymentId,
+        serverId: result.serverId
+      });
+    } else {
+      res.status(500).json({ 
         error: true, 
-        message: result.error || 'Ошибка при запуске процесса развертывания' 
+        message: result.error || 'Не удалось запустить развертывание Docker' 
       });
     }
     
-    // Отправляем ответ клиенту
-    res.status(201).json({ 
-      success: true, 
-      message: 'Процесс развертывания запущен', 
-      serverId: result.serverId,
-      deploymentId: result.deploymentId
-    });
   } catch (error: any) {
-    logger.error(`Ошибка при запуске процесса развертывания: ${error}`);
-    res.status(500).json({ error: true, message: 'Ошибка при запуске процесса развертывания' });
+    logger.error(`Ошибка при запуске развертывания Docker: ${error.message}`);
+    res.status(500).json({ 
+      error: true, 
+      message: `Внутренняя ошибка сервера: ${error.message}` 
+    });
   }
 };
 
 /**
- * Получение статуса развертывания (обновленная версия)
+ * Получение статуса развертывания
  */
 export const getDeploymentStatus = async (req: Request, res: Response) => {
   try {
     const deploymentId = req.params.deploymentId;
-    
     const status = getDeploymentStatusService(deploymentId);
     
-    if (!status) {
-      return res.status(404).json({ error: true, message: 'Процесс развертывания не найден' });
+    if (status) {
+      res.json(status);
+    } else {
+      res.status(404).json({ error: true, message: 'Статус развертывания не найден' });
     }
-    
-    res.json({
-      status: status.status,
-      serverId: status.serverId,
-      logs: status.logs,
-      error: status.error
-    });
   } catch (error) {
     logger.error(`Ошибка при получении статуса развертывания: ${error}`);
-    res.status(500).json({ error: true, message: 'Ошибка при получении статуса развертывания' });
+    res.status(500).json({ error: true, message: 'Ошибка при получении статуса' });
   }
 };
 
 /**
- * Включение/выключение автомасштабирования
+ * Управление автомасштабированием
  */
 export const toggleAutoscaling = async (req: Request, res: Response) => {
   try {
     const { enabled } = req.body;
-    
     if (typeof enabled !== 'boolean') {
-      return res.status(400).json({ 
-        error: true, 
-        message: 'Необходимо указать параметр enabled (true/false)' 
-      });
+      return res.status(400).json({ error: true, message: 'Параметр enabled должен быть boolean' });
     }
-    
-    setAutoscalingEnabled(enabled);
-    
-    res.json({ 
-      success: true, 
-      autoscaling: getAutoscalingStatus()
-    });
+    await setAutoscalingEnabled(enabled);
+    res.json({ success: true, message: `Автомасштабирование ${enabled ? 'включено' : 'выключено'}` });
   } catch (error) {
     logger.error(`Ошибка при изменении статуса автомасштабирования: ${error}`);
-    res.status(500).json({ error: true, message: 'Ошибка при изменении статуса автомасштабирования' });
+    res.status(500).json({ error: true, message: 'Ошибка сервера' });
   }
 };
 
@@ -333,31 +326,28 @@ export const toggleAutoscaling = async (req: Request, res: Response) => {
  */
 export const getAutoScalingStatus = async (req: Request, res: Response) => {
   try {
-    res.json({ 
-      success: true, 
-      autoscaling: getAutoscalingStatus()
-    });
+    const status = await getAutoscalingStatus();
+    res.json({ status });
   } catch (error) {
     logger.error(`Ошибка при получении статуса автомасштабирования: ${error}`);
-    res.status(500).json({ error: true, message: 'Ошибка при получении статуса автомасштабирования' });
+    res.status(500).json({ error: true, message: 'Ошибка сервера' });
   }
 };
 
 /**
- * Запуск ручного масштабирования
+ * Запуск ручного автомасштабирования
  */
 export const runManualScaling = async (req: Request, res: Response) => {
   try {
-    // Запускаем процесс проверки и масштабирования
-    const scalingResult = await checkAndScale();
-    
-    res.json({ 
-      success: true, 
-      message: 'Процесс масштабирования запущен'
-    });
+    const { direction } = req.body; // 'up' или 'down'
+    if (direction !== 'up' && direction !== 'down') {
+      return res.status(400).json({ error: true, message: 'Параметр direction должен быть up или down' });
+    }
+    await checkAndScale(); // Запускаем принудительно
+    res.json({ success: true, message: `Запущено ручное масштабирование (${direction})` });
   } catch (error) {
-    logger.error(`Ошибка при запуске ручного масштабирования: ${error}`);
-    res.status(500).json({ error: true, message: 'Ошибка при запуске ручного масштабирования' });
+    logger.error(`Ошибка при ручном масштабировании: ${error}`);
+    res.status(500).json({ error: true, message: 'Ошибка сервера' });
   }
 };
 
@@ -367,34 +357,10 @@ export const runManualScaling = async (req: Request, res: Response) => {
 export const getServerMetrics = async (req: Request, res: Response) => {
   try {
     const serverId = parseInt(req.params.id);
-    
-    // Проверяем существование сервера
-    const server = await prisma.vpnServer.findUnique({
-      where: { id: serverId }
-    });
-    
-    if (!server) {
-      return res.status(404).json({ error: true, message: 'Сервер не найден' });
-    }
-    
-    // Запрашиваем свежие метрики
-    await collectServerMetrics(serverId);
-    
-    // Получаем историю метрик
-    const metrics = getServerMetricsHistory(serverId);
-    
-    // Определяем, перегружен ли сервер
-    const overloaded = isServerOverloaded(serverId);
-    
-    res.json({ 
-      success: true,
-      serverId,
-      metrics,
-      overloaded,
-      lastUpdate: metrics.length > 0 ? metrics[metrics.length - 1].timestamp : null
-    });
+    const metrics = await getServerMetricsHistory(serverId);
+    res.json({ metrics });
   } catch (error) {
     logger.error(`Ошибка при получении метрик сервера: ${error}`);
-    res.status(500).json({ error: true, message: 'Ошибка при получении метрик сервера' });
+    res.status(500).json({ error: true, message: 'Ошибка получения метрик' });
   }
 }; 
