@@ -41,6 +41,7 @@ interface Config {
   defaultProvider: string; // Провайдер по умолчанию
   defaultMaxClients: number; // Максимальное кол-во клиентов по умолчанию
   deploymentRegions: string[]; // Регионы для развертывания
+  adminEmail: string; // Email администратора для SSL/Let's Encrypt
   
   // Auto Renewal Settings
   enableAutoRenewal: boolean;
@@ -115,6 +116,7 @@ const config: Config = {
   defaultProvider: process.env.DEFAULT_PROVIDER || 'DigitalOcean',
   defaultMaxClients: parseInt(process.env.DEFAULT_MAX_CLIENTS || '100', 10),
   deploymentRegions: (process.env.DEPLOYMENT_REGIONS || 'amsterdam,frankfurt,london').split(','),
+  adminEmail: process.env.ADMIN_EMAIL || 'admin@example.com',
   
   // Auto Renewal Settings
   enableAutoRenewal: process.env.ENABLE_AUTO_RENEWAL === 'true',

@@ -217,24 +217,40 @@ export const deleteServer = async (req: Request, res: Response) => {
  */
 export const deployServer = async (req: Request, res: Response) => {
   try {
-    const { name, host, port, location, provider, maxClients } = req.body;
+    // Получаем все данные из тела запроса, включая новые поля SSH
+    const { 
+      name, host, port, location, provider, maxClients, 
+      sshUsername, sshPassword 
+    } = req.body;
     
     // Проверка обязательных полей
+    // Добавляем проверку для sshUsername и sshPassword, если указан host
     if (!name || (!host && !location) || !provider) {
       return res.status(400).json({ 
         error: true, 
         message: 'Необходимо указать название, хост/локацию и провайдер сервера' 
       });
     }
+    
+    // Если указан host (развертывание на существующем сервере), 
+    // то sshUsername и sshPassword становятся обязательными
+    if (host && (!sshUsername || !sshPassword)) {
+        return res.status(400).json({
+            error: true,
+            message: 'Для развертывания на существующем сервере необходимо указать SSH имя пользователя и пароль'
+        });
+    }
 
-    // Создаем опции для развертывания
+    // Создаем опции для развертывания, передаем SSH данные
     const deployOptions: ServerDeploymentOptions = {
       name,
       host,
       port: port ? parseInt(port) : undefined,
       location: location || '',
       provider,
-      maxClients: maxClients ? parseInt(maxClients) : undefined
+      maxClients: maxClients ? parseInt(maxClients) : undefined,
+      sshUsername, // Передаем sshUsername
+      sshPassword  // Передаем sshPassword
     };
     
     // Запускаем процесс развертывания через новый сервис

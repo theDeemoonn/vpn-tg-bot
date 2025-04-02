@@ -125,9 +125,9 @@ if [ ! -f ".env.example" ]; then
   log "Создание примера .env файла..."
   cat > .env.example << 'EOL'
 # Telegram Bot
-TELEGRAM_BOT_TOKEN=7769413832:AAEphj7DB4nDhjpUs06WHMuWAiB9QpKmRfI
-TELEGRAM_BOT_USERNAME=vpn_ug_bot
-ADMIN_CHAT_ID=733510
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_BOT_USERNAME=your_bot_username
+ADMIN_CHAT_ID=your_admin_chat_id
 
 # Database
 POSTGRES_USER=postgres
@@ -136,8 +136,8 @@ POSTGRES_DB=vpn_bot
 DATABASE_URL=postgresql://postgres:secure_password_here@postgres:5432/vpn_bot?schema=public
 
 # YooKassa API
-YOOKASSA_SHOP_ID=1058968
-YOOKASSA_SECRET_KEY=test_dpRoHy3tpS_5hR3iSlHFalxBg1jn5ErZfujIVKGTn2Y
+YOOKASSA_SHOP_ID=your_shop_id
+YOOKASSA_SECRET_KEY=your_secret_key
 
 # Server
 PORT=3000

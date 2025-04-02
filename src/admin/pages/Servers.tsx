@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import axios from 'axios';
+import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import axios from "axios";
 
 interface Server {
   id: number;
@@ -23,11 +23,14 @@ const Servers: React.FC = () => {
     const fetchServers = async () => {
       try {
         setIsLoading(true);
-        const response = await axios.get('/api/servers');
+        const response = await axios.get("/api/servers");
         setServers(response.data.servers);
         setError(null);
       } catch (err: any) {
-        setError('Ошибка при загрузке серверов: ' + (err.response?.data?.message || err.message));
+        setError(
+          "Ошибка при загрузке серверов: " +
+            (err.response?.data?.message || err.message)
+        );
       } finally {
         setIsLoading(false);
       }
@@ -53,9 +56,9 @@ const Servers: React.FC = () => {
           </Link>
         </div>
       </div>
-      
+
       {error && <div className="error-message">{error}</div>}
-      
+
       <div className="table-container">
         <table className="servers-table">
           <thead>
@@ -70,17 +73,24 @@ const Servers: React.FC = () => {
             </tr>
           </thead>
           <tbody>
-            {servers.map(server => (
-              <tr key={server.id} className={!server.isActive ? 'inactive-row' : ''}>
+            {servers.map((server) => (
+              <tr
+                key={server.id}
+                className={!server.isActive ? "inactive-row" : ""}
+              >
                 <td>{server.id}</td>
                 <td>{server.name}</td>
                 <td>{server.host}</td>
                 <td>{server.port}</td>
                 <td>
                   <div className="usage-bar">
-                    <div 
-                      className="usage-fill" 
-                      style={{ width: `${(server.currentUsers / server.maxUsers) * 100}%` }}
+                    <div
+                      className="usage-fill"
+                      style={{
+                        width: `${
+                          (server.currentUsers / server.maxUsers) * 100
+                        }%`,
+                      }}
                     ></div>
                     <span className="usage-text">
                       {server.currentUsers} / {server.maxUsers}
@@ -88,13 +98,31 @@ const Servers: React.FC = () => {
                   </div>
                 </td>
                 <td>
-                  <span className={`status ${server.isActive ? 'active' : 'inactive'}`}>
-                    {server.isActive ? 'Активен' : 'Неактивен'}
+                  <span
+                    className={`status ${
+                      server.isActive ? "active" : "inactive"
+                    }`}
+                  >
+                    {server.isActive ? "Активен" : "Неактивен"}
                   </span>
                 </td>
                 <td>
-                  <Link to={`/servers/${server.id}`} className="btn btn-primary btn-sm">
+                  <Link
+                    to={`/servers/${server.id}`}
+                    className="btn btn-primary btn-sm"
+                  >
                     Подробнее
+                  </Link>
+                </td>
+                <td>
+                  {/* Существующие кнопки/действия */}
+                  <Link
+                    to={`/servers/${server.id}/users`}
+                    className="btn btn-info btn-sm ml-2"
+                  >
+                    {" "}
+                    {/* Добавьте эту ссылку */}
+                    Пользователи
                   </Link>
                 </td>
               </tr>
@@ -102,7 +130,7 @@ const Servers: React.FC = () => {
           </tbody>
         </table>
       </div>
-      
+
       {servers.length === 0 && (
         <div className="no-data">Серверы не найдены</div>
       )}
@@ -110,4 +138,4 @@ const Servers: React.FC = () => {
   );
 };
 
-export default Servers; 
+export default Servers;

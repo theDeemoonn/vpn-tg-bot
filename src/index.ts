@@ -15,6 +15,7 @@ import path from 'path';
 import apiRoutes from './api';
 import { initScheduler } from './services/scheduler';
 import { initializeRealServer } from './services/server';
+import { startAccessControlJob } from './jobs/accessControl.job';
 
 // Загружаем переменные окружения
 dotenv.config();
@@ -239,6 +240,9 @@ async function startServer() {
       
       // Инициализация планировщика задач
       initScheduler();
+      
+      // Запуск задачи контроля доступа
+      startAccessControlJob();
       
       // Инициализация реального VPN-сервера
       await initializeRealServer();

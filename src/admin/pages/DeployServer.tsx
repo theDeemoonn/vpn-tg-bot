@@ -15,6 +15,8 @@ const DeployServer: React.FC = () => {
     location: '',
     provider: '',
     maxClients: '50',
+    sshUsername: 'root',
+    sshPassword: '',
   });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -127,6 +129,32 @@ const DeployServer: React.FC = () => {
               value={formData.port}
               onChange={handleChange}
               placeholder="22"
+              required
+            />
+          </div>
+          
+          <div className="form-group">
+            <label htmlFor="sshUsername">SSH Имя пользователя</label>
+            <input
+              type="text"
+              id="sshUsername"
+              name="sshUsername"
+              value={formData.sshUsername}
+              onChange={handleChange}
+              placeholder="root"
+              required
+            />
+          </div>
+          
+          <div className="form-group">
+            <label htmlFor="sshPassword">SSH Пароль</label>
+            <input
+              type="password"
+              id="sshPassword"
+              name="sshPassword"
+              value={formData.sshPassword}
+              onChange={handleChange}
+              placeholder="Введите пароль SSH"
               required
             />
           </div>

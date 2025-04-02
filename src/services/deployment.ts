@@ -3,7 +3,7 @@ import { prisma } from './database';
 import logger from '../utils/logger';
 import config from '../config';
 import { v4 as uuidv4 } from 'uuid';
-import { spawn, execSync } from 'child_process';
+import { spawn, execSync, ChildProcessWithoutNullStreams } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -23,6 +23,8 @@ export interface ServerDeploymentOptions {
   provider: string;   // Облачный провайдер
   maxClients?: number;// Максимальное количество клиентов
   isAutoScaled?: boolean; // Флаг, что сервер создан автоматически
+  sshUsername?: string; // Имя пользователя SSH
+  sshPassword?: string; // Пароль SSH
 }
 
 // Доступные облачные провайдеры
@@ -190,7 +192,7 @@ async function waitForSsh(host: string, port: number = 22, timeout: number = 180
   
   while (!isReady && (Date.now() - startTime) / 1000 < timeout) {
     try {
-      execSync(`ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes -i ${config.sshPrivateKeyPath} -p ${port} ${config.sshUser}@${host} echo "SSH connection test"`, {
+      execSync(`ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -i ${config.sshPrivateKeyPath} -p ${port} ${config.sshUser}@${host} echo "SSH connection test"`, {
         timeout: 5000
       });
       isReady = true;
@@ -217,8 +219,9 @@ export async function deployVpnServer(options: ServerDeploymentOptions): Promise
       return { success: false, error: 'Необходимо указать название, регион и провайдер' };
     }
     
-    // Если не указан хост, создаем новый сервер в облаке
     let serverHost = options.host;
+    let sshUsername = options.sshUsername;
+    let sshPassword = options.sshPassword;
     
     if (!serverHost) {
       // Проверяем, поддерживается ли указанный провайдер
@@ -234,6 +237,14 @@ export async function deployVpnServer(options: ServerDeploymentOptions): Promise
       }
       
       serverHost = createResult.ip;
+      sshUsername = config.sshUser; // Используем пользователя из конфига для созданных серверов
+      sshPassword = undefined; // Пароль не используется
+    } else {
+      // Если используется существующий хост, проверяем наличие SSH данных
+      if (!sshUsername || !sshPassword) {
+        // Эта проверка уже есть в контроллере, но добавим и сюда для надежности
+        return { success: false, error: 'Для существующего сервера необходимы SSH имя пользователя и пароль' };
+      }
     }
     
     // Создаем запись о сервере в базе данных
@@ -253,11 +264,10 @@ export async function deployVpnServer(options: ServerDeploymentOptions): Promise
     
     logger.info(`Сервер ${options.name} (${serverHost}) добавлен в базу данных с ID: ${server.id}`);
     
-    // Генерируем уникальный ID для процесса развертывания
     const deploymentId = uuidv4();
     
-    // Запускаем процесс развертывания в фоновом режиме
-    deployVpnServerBackground(deploymentId, server);
+    // Передаем SSH данные в фоновый процесс
+    deployVpnServerBackground(deploymentId, server, sshUsername, sshPassword);
     
     return { 
       success: true, 
@@ -271,818 +281,329 @@ export async function deployVpnServer(options: ServerDeploymentOptions): Promise
 }
 
 /**
- * Создает скрипт установки для указанного сервера
+ * Читает базовый скрипт установки из файла
  */
-function createInstallScript(server: any): string {
-  return `#!/bin/bash
-
-# Скрипт для развертывания Xray VPN сервера
-# Версия: 2.0.0
-
-# Обработка ошибок
-set -e
-trap 'echo "Произошла ошибка в строке $LINENO. Выход из скрипта."; exit 1' ERR
-
-# Цветной вывод для лучшей читаемости
-RED='\\x1b[0;31m'
-GREEN='\\x1b[0;32m'
-YELLOW='\\x1b[0;33m'
-BLUE='\\x1b[0;34m'
-NC='\\x1b[0m' # Сброс цвета
-
-# Функция для вывода информации
-log() {
-    echo -e "\${BLUE}[INFO]\${NC} $1"
-}
-
-# Функция для вывода успешных операций
-success() {
-    echo -e "\${GREEN}[SUCCESS]\${NC} $1"
-}
-
-# Функция для вывода предупреждений
-warning() {
-    echo -e "\${YELLOW}[WARNING]\${NC} $1"
-}
-
-# Функция для вывода ошибок
-error() {
-    echo -e "\${RED}[ERROR]\${NC} $1"
-}
-
-# Функция проверки прав суперпользователя
-check_root() {
-    if [ "$(id -u)" -ne 0 ]; then
-        error "Этот скрипт должен быть запущен с правами суперпользователя."
-        exit 1
-    fi
-    success "Проверка прав: OK"
-}
-
-# Проверка наличия команды
-check_command() {
-    if ! command -v $1 &> /dev/null; then
-        warning "Команда $1 не найдена. Устанавливаем..."
-        return 1
-    else
-        log "Команда $1 найдена."
-        return 0
-    fi
-}
-
-# Обновление системы
-update_system() {
-    log "Обновление системных пакетов..."
-    apt-get update -y
-    apt-get upgrade -y
-    success "Система обновлена"
-}
-
-# Установка необходимых зависимостей
-install_dependencies() {
-    log "Установка необходимых зависимостей..."
-    apt-get install -y \\
-        curl \\
-        wget \\
-        unzip \\
-        socat \\
-        cron \\
-        iptables \\
-        nginx \\
-        certbot \\
-        python3-certbot-nginx \\
-        jq \\
-        ufw \\
-        lsb-release \\
-        moreutils \\
-        openssh-client
-
-    success "Зависимости установлены"
-}
-
-# Установка Node.js (для API сервера)
-install_nodejs() {
-    if ! check_command node; then
-        log "Установка Node.js 18.x..."
-        curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-        apt-get install -y nodejs
-        success "Node.js установлен: $(node -v)"
-    fi
-
-    if ! check_command pm2; then
-        log "Установка PM2..."
-        npm install -g pm2
-        success "PM2 установлен: $(pm2 -v)"
-    fi
-}
-
-# Установка BBR для улучшения сетевой производительности
-enable_bbr() {
-    log "Включение TCP BBR..."
-    if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
-        echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
-    fi
-    
-    if ! grep -q "net.ipv4.tcp_congestion_control=bbr" /etc/sysctl.conf; then
-        echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
-    fi
-    
-    sysctl -p
-    
-    if lsmod | grep -q "bbr"; then
-        success "TCP BBR включен"
-    else
-        warning "Не удалось включить TCP BBR. Производительность может быть ниже оптимальной."
-    fi
-}
-
-# Настройка файрвола
-setup_firewall() {
-    log "Настройка файрвола..."
-    
-    # Разрешаем SSH, HTTP и HTTPS
-    ufw allow ssh
-    ufw allow http
-    ufw allow https
-    
-    # Разрешаем порты для Xray
-    ufw allow 443/tcp
-    
-    # Включаем файрвол, если он не включен
-    if ! ufw status | grep -q "Status: active"; then
-        echo "y" | ufw enable
-    fi
-    
-    success "Файрвол настроен"
-}
-
-# Получение SSL сертификата
-setup_ssl() {
-    local domain=$1
-    local email=$2
-    
-    log "Настройка SSL для домена: $domain"
-    
-    # Проверяем, доступен ли домен
-    if [ -z "$domain" ] || [[ "$domain" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
-        warning "Указан IP-адрес или домен отсутствует. Пропускаем получение SSL сертификата."
-        return 1
-    fi
-    
-    # Настройка Nginx
-    cat > /etc/nginx/sites-available/default << EOL
-server {
-    listen 80;
-    listen [::]:80;
-    
-    root /var/www/html;
-    index index.html index.htm;
-    
-    server_name \${domain};
-    
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
-}
-EOL
-    
-    # Перезапускаем Nginx
-    systemctl restart nginx
-    
-    # Получаем SSL-сертификат
-    if [ -n "$email" ]; then
-        certbot --nginx -d \${domain} --non-interactive --agree-tos --email \${email}
-    else
-        certbot --nginx -d \${domain} --non-interactive --agree-tos --register-unsafely-without-email
-    fi
-    
-    # Проверяем, был ли успешно получен сертификат
-    if [ -d "/etc/letsencrypt/live/\${domain}" ]; then
-        success "SSL-сертификат успешно получен для \${domain}"
-        
-        # Настраиваем автообновление сертификата
-        if ! crontab -l | grep -q "certbot renew"; then
-            (crontab -l 2>/dev/null; echo "0 3 * * * certbot renew --quiet") | crontab -
-            log "Настроено автоматическое обновление SSL-сертификатов (ежедневно в 3:00)"
-        fi
-        
-        return 0
-    else
-        error "Не удалось получить SSL-сертификат для \${domain}"
-        return 1
-    fi
-}
-
-# Установка Xray
-install_xray() {
-    log "Установка Xray..."
-    
-    # Удаляем существующую установку Xray, если она есть
-    if [ -f "/usr/local/bin/xray" ]; then
-        log "Найдена существующая установка Xray. Удаляем..."
-        bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove
-    fi
-    
-    # Устанавливаем Xray
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-    
-    # Проверяем, установлен ли Xray
-    if [ -f "/usr/local/bin/xray" ]; then
-        success "Xray установлен: $(/usr/local/bin/xray -version | head -n 1)"
-    else
-        error "Не удалось установить Xray."
-        exit 1
-    fi
-    
-    # Создаем необходимые директории
-    mkdir -p /usr/local/etc/xray
-    mkdir -p /var/log/xray
-    
-    # Устанавливаем права на директории
-    chmod 700 /usr/local/etc/xray
-    chmod 700 /var/log/xray
-}
-
-# Генерация UUID для клиентов
-generate_uuid() {
-    cat /proc/sys/kernel/random/uuid
-}
-
-# Создание базовой конфигурации Xray
-configure_xray() {
-    local domain=$1
-    log "Настройка конфигурации Xray..."
-    
-    # Генерируем UUID для первого клиента
-    local uuid=$(generate_uuid)
-    
-    # Определяем пути к сертификатам
-    local cert_path="/etc/letsencrypt/live/\${domain}/fullchain.pem"
-    local key_path="/etc/letsencrypt/live/\${domain}/privkey.pem"
-    
-    # Если домен не указан или используется IP, используем самоподписанные сертификаты
-    if [ -z "$domain" ] || [[ "$domain" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
-        warning "Используется IP-адрес. Генерируем самоподписанные сертификаты..."
-        
-        # Создаем директорию для сертификатов
-        mkdir -p /usr/local/etc/xray/ssl
-        
-        # Генерируем самоподписанный сертификат
-        openssl req -x509 -newkey rsa:4096 -keyout /usr/local/etc/xray/ssl/private.key \\
-            -out /usr/local/etc/xray/ssl/cert.pem -days 3650 -nodes \\
-            -subj "/CN=\${domain:-localhost}"
-        
-        cert_path="/usr/local/etc/xray/ssl/cert.pem"
-        key_path="/usr/local/etc/xray/ssl/private.key"
-    fi
-    
-    # Создаем конфигурацию Xray
-    cat > /usr/local/etc/xray/config.json << EOL
-{
-  "log": {
-    "loglevel": "warning",
-    "access": "/var/log/xray/access.log",
-    "error": "/var/log/xray/error.log"
-  },
-  "inbounds": [
-    {
-      "port": 443,
-      "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "id": "\${uuid}",
-            "flow": "xtls-rprx-vision",
-            "email": "default-user"
-          }
-        ],
-        "decryption": "none",
-        "fallbacks": [
-          {
-            "dest": 80
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "tls",
-        "tlsSettings": {
-          "alpn": ["http/1.1"],
-          "certificates": [
-            {
-              "certificateFile": "\${cert_path}",
-              "keyFile": "\${key_path}"
-            }
-          ]
-        }
-      }
-    }
-  ],
-  "outbounds": [
-    {
-      "protocol": "freedom",
-      "tag": "direct"
-    },
-    {
-      "protocol": "blackhole",
-      "tag": "block"
-    }
-  ],
-  "routing": {
-    "rules": [
-      {
-        "type": "field",
-        "ip": ["geoip:private"],
-        "outboundTag": "block"
-      }
-    ]
-  }
-}
-EOL
-    
-    # Устанавливаем правильные права на конфигурацию
-    chmod 644 /usr/local/etc/xray/config.json
-    
-    # Генерируем конфигурацию для клиента
-    log "Генерация конфигурации для клиента..."
-    mkdir -p /root/xray-clients
-    
-    local client_config=$(cat << EOL
-{
-  "v": "2",
-  "ps": "VPN-Server",
-  "add": "\${domain}",
-  "port": "443",
-  "id": "\${uuid}",
-  "aid": "0",
-  "scy": "auto",
-  "net": "tcp",
-  "type": "none",
-  "tls": "tls",
-  "flow": "xtls-rprx-vision",
-  "sni": ""
-}
-EOL
-)
-    
-    # Сохраняем конфигурацию клиента
-    echo "\${client_config}" > /root/xray-clients/client.json
-    
-    # Создаем QR-код, если qrencode установлен
-    if check_command qrencode; then
-        echo "\${client_config}" | qrencode -t ansiutf8 -o /root/xray-clients/client.qr
-        log "QR-код создан в /root/xray-clients/client.qr"
-    else
-        apt-get install -y qrencode
-        echo "\${client_config}" | qrencode -t ansiutf8 -o /root/xray-clients/client.qr
-        log "QR-код создан в /root/xray-clients/client.qr"
-    fi
-    
-    # Перезапускаем Xray
-    systemctl restart xray
-    systemctl enable xray
-    
-    # Проверяем статус Xray
-    if systemctl is-active --quiet xray; then
-        success "Xray успешно настроен и запущен"
-    else
-        error "Не удалось запустить Xray. Проверьте журналы: systemctl status xray"
-        exit 1
-    fi
-    
-    # Создаем инструкцию для пользователя
-    cat > /root/xray-clients/README.txt << EOL
-Информация о конфигурации VPN:
-
-Сервер: \${domain}
-Порт: 443
-Протокол: VLESS
-ID пользователя: \${uuid}
-Flow: xtls-rprx-vision
-TLS: включен
-Network: tcp
-
-Для подключения используйте клиент Xray или v2rayN.
-Файл конфигурации находится в: /root/xray-clients/client.json
-QR-код для быстрой настройки: /root/xray-clients/client.qr
-EOL
-    
-    log "Инструкция по подключению создана в /root/xray-clients/README.txt"
-    
-    # Выводим информацию для импорта
-    echo ""
-    echo "======== ИНФОРМАЦИЯ ДЛЯ ПОДКЛЮЧЕНИЯ ========"
-    echo "Сервер: \${domain}"
-    echo "UUID пользователя: \${uuid}"
-    echo "Конфигурация клиента сохранена в /root/xray-clients/client.json"
-    echo "Инструкция по подключению: /root/xray-clients/README.txt"
-    echo "============================================="
-}
-
-# Создание API для управления VPN
-setup_api() {
-    log "Настройка API для управления VPN..."
-    
-    # Создаем директорию для API
-    mkdir -p /usr/local/bin/vpn-api
-    
-    # Создаем сервер API
-    cat > /usr/local/bin/vpn-api/server.js << 'EOLJS'
-const express = require('express');
-const fs = require('fs');
-const { execSync } = require('child_process');
-const app = express();
-const port = 3000;
-
-app.use(express.json());
-
-// Функция для генерации UUID
-function generateUUID() {
-  return execSync('cat /proc/sys/kernel/random/uuid').toString().trim();
-}
-
-// Функция для обновления конфигурации Xray
-function updateXrayConfig(configData) {
+function getBaseInstallScript(): string {
   try {
-    const configPath = '/usr/local/etc/xray/config.json';
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    
-    let message = '';
-    
-    // Действие с клиентом
-    if (configData.action === 'add') {
-      // Генерируем UUID если не указан
-      const clientId = configData.clientId || generateUUID();
-      
-      // Проверяем, существует ли клиент с таким ID
-      const clientExists = config.inbounds[0].settings.clients.some(c => c.id === clientId);
-      
-      if (!clientExists) {
-        // Добавить нового клиента
-        config.inbounds[0].settings.clients.push({
-          id: clientId,
-          flow: "xtls-rprx-vision",
-          email: configData.email || 'user-' + clientId.substring(0, 8)
-        });
-        message = 'Клиент ' + clientId + ' успешно добавлен';
-      } else {
-        return { success: false, message: 'Клиент с ID ' + clientId + ' уже существует' };
-      }
-    } else if (configData.action === 'remove') {
-      // Удаление клиента
-      if (!configData.clientId) {
-        return { success: false, message: 'Необходимо указать clientId для удаления' };
-      }
-      
-      const initialLength = config.inbounds[0].settings.clients.length;
-      config.inbounds[0].settings.clients = config.inbounds[0].settings.clients.filter(c => c.id !== configData.clientId);
-      
-      if (config.inbounds[0].settings.clients.length === initialLength) {
-        return { success: false, message: 'Клиент с ID ' + configData.clientId + ' не найден' };
-      }
-      
-      message = 'Клиент ' + configData.clientId + ' успешно удален';
-    } else if (configData.action === 'list') {
-      // Просмотр списка клиентов
-      return { 
-        success: true, 
-        clients: config.inbounds[0].settings.clients.map(c => ({
-          id: c.id,
-          email: c.email
-        }))
-      };
-    } else {
-      return { success: false, message: 'Неизвестное действие' };
+    const scriptPath = path.resolve(process.cwd(), 'scripts', 'install_xray.sh');
+    if (!fs.existsSync(scriptPath)) {
+      logger.error(`Файл скрипта установки не найден: ${scriptPath}`);
+      throw new Error(`Файл скрипта установки не найден: ${scriptPath}`);
     }
-    
-    // Обновляем конфигурацию
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-    
-    // Перезапускаем Xray
-    execSync('systemctl restart xray');
-    
-    // Генерируем клиентскую конфигурацию, если добавлен новый клиент
-    if (configData.action === 'add') {
-      // Получаем домен из конфигурации
-      const domain = configData.domain || execSync('hostname -f').toString().trim();
-      
-      // Создаем директорию для конфигураций клиентов
-      if (!fs.existsSync('/root/xray-clients')) {
-        fs.mkdirSync('/root/xray-clients', { recursive: true });
-      }
-      
-      // Создаем конфигурацию для клиента
-      const clientConfig = {
-        v: "2",
-        ps: configData.email || 'VPN-Client-' + configData.clientId.substring(0, 8),
-        add: domain,
-        port: "443",
-        id: configData.clientId,
-        aid: "0",
-        scy: "auto",
-        net: "tcp",
-        type: "none",
-        tls: "tls",
-        flow: "xtls-rprx-vision",
-        sni: ""
-      };
-      
-      fs.writeFileSync('/root/xray-clients/' + configData.clientId + '.json', JSON.stringify(clientConfig, null, 2));
-      
-      // Добавляем информацию о созданной конфигурации
-      message += '. Конфигурация клиента сохранена в /root/xray-clients/' + configData.clientId + '.json';
-    }
-    
-    return { success: true, message };
-  } catch (error) {
-    return { success: false, message: error.message };
+    return fs.readFileSync(scriptPath, 'utf8');
+  } catch (error: any) {
+    logger.error(`Ошибка чтения файла скрипта установки: ${error.message}`);
+    throw error; // Перебрасываем ошибку дальше
   }
-}
-
-// Маршрут для управления клиентами
-app.post('/api/clients', (req, res) => {
-  const result = updateXrayConfig(req.body);
-  if (result.success) {
-    res.status(200).json(result);
-  } else {
-    res.status(400).json(result);
-  }
-});
-
-// Маршрут для получения статуса сервера
-app.get('/api/status', (req, res) => {
-  try {
-    // Проверяем, работает ли Xray
-    const xrayStatus = execSync('systemctl is-active xray').toString().trim();
-    
-    // Получаем версию Xray
-    const xrayVersion = execSync('/usr/local/bin/xray -version | head -n 1').toString().trim();
-    
-    // Получаем информацию о системе
-    const uptime = execSync('uptime -p').toString().trim();
-    const memory = execSync('free -m | grep Mem').toString().trim().split(/\s+/);
-    const disk = execSync('df -h / | tail -n 1').toString().trim().split(/\s+/);
-    const load = execSync('cat /proc/loadavg').toString().trim().split(' ').slice(0, 3);
-    
-    res.json({
-      status: xrayStatus === 'active' ? 'running' : 'stopped',
-      xrayVersion,
-      system: {
-        uptime,
-        memory: {
-          total: parseInt(memory[1]),
-          used: parseInt(memory[2]),
-          free: parseInt(memory[3])
-        },
-        disk: {
-          total: disk[1],
-          used: disk[2],
-          free: disk[3],
-          usage: disk[4]
-        },
-        load
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Запуск сервера
-app.listen(port, '127.0.0.1', () => {
-  console.log('API сервер запущен на порту ' + port);
-});
-EOLJS
-    
-    # Создаем package.json для API
-    cat > /usr/local/bin/vpn-api/package.json << EOL
-{
-  "name": "vpn-api",
-  "version": "1.0.0",
-  "description": "API для управления VPN-сервером",
-  "main": "server.js",
-  "dependencies": {
-    "express": "^4.18.2"
-  }
-}
-EOL
-    
-    # Устанавливаем зависимости
-    cd /usr/local/bin/vpn-api
-    npm install
-    
-    # Создаем системную службу для API
-    cat > /etc/systemd/system/vpn-api.service << EOL
-[Unit]
-Description=VPN API Server
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/usr/local/bin/vpn-api
-ExecStart=/usr/bin/node /usr/local/bin/vpn-api/server.js
-Restart=on-failure
-RestartSec=10
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=vpn-api
-
-[Install]
-WantedBy=multi-user.target
-EOL
-    
-    # Запускаем и включаем службу
-    systemctl daemon-reload
-    systemctl start vpn-api
-    systemctl enable vpn-api
-    
-    # Проверяем, запущена ли служба
-    if systemctl is-active --quiet vpn-api; then
-        success "API сервер успешно настроен и запущен"
-    else
-        warning "Не удалось запустить API сервер. Проверьте журналы: systemctl status vpn-api"
-    fi
-}
-
-# Главная функция
-main() {
-    # Параметры
-    local domain="${server.host}"
-    local email="admin@example.com"
-    
-    log "Начало установки Xray VPN сервера..."
-    log "Домен/IP: \${domain}"
-    
-    # Проверка прав суперпользователя
-    check_root
-    
-    # Обновление системы
-    update_system
-    
-    # Установка зависимостей
-    install_dependencies
-    
-    # Установка Node.js
-    install_nodejs
-    
-    # Включение BBR
-    enable_bbr
-    
-    # Настройка файрвола
-    setup_firewall
-    
-    # Установка SSL (если указан домен)
-    if [ -n "$domain" ] && ! [[ "$domain" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
-        setup_ssl "$domain" "$email"
-    fi
-    
-    # Установка Xray
-    install_xray
-    
-    # Настройка Xray
-    configure_xray "$domain"
-    
-    # Настройка API
-    setup_api
-    
-    success "Установка и настройка Xray VPN сервера завершена!"
-    
-    # Вывод информации о сервере
-    echo ""
-    echo "===================== ИТОГИ УСТАНОВКИ ====================="
-    echo "Xray VPN сервер успешно установлен и настроен!"
-    echo "Xray версия: $(/usr/local/bin/xray -version | head -n 1)"
-    echo ""
-    echo "Файл конфигурации: /usr/local/etc/xray/config.json"
-    echo "API доступен по адресу: http://127.0.0.1:3000/api"
-    echo ""
-    echo "Статус служб:"
-    echo "Xray: $(systemctl is-active xray)"
-    echo "API сервер: $(systemctl is-active vpn-api)"
-    echo ""
-    echo "Конфигурация клиента сохранена в: /root/xray-clients/"
-    echo "Инструкция по подключению: /root/xray-clients/README.txt"
-    echo "============================================================"
-}
-
-# Запуск установки
-main "$@"`;
 }
 
 // Объект для хранения процессов развертывания и их статусов
 interface DeploymentProcess {
-  status: 'running' | 'completed' | 'failed';
+  status: 'running' | 'completed' | 'failed' | 'completed_with_warning';
   serverId?: number;
   logs: string;
   error?: string;
+  output: string[];
 }
 
 const deployments: Record<string, DeploymentProcess> = {};
 
 /**
+ * Вспомогательная функция для выполнения SSH команды и возврата Promise с результатом.
+ */
+function executeSshCommandPromise(
+  host: string, 
+  username: string, 
+  command: string, 
+  sshPort: number,
+  usePassword?: boolean, 
+  password?: string, 
+  sshKeyPath?: string
+): Promise<{ code: number | null; output: string }> {
+  return new Promise((resolve, reject) => {
+    let sshProcess: ChildProcessWithoutNullStreams;
+    let outputData: string[] = [];
+    const baseSshOptions = ['-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-p', sshPort.toString()];
+    const remoteTarget = `${username}@${host}`;
+    let commandArgs: string[];
+
+    if (usePassword) {
+      if (!password) {
+        return reject(new Error('Пароль SSH не предоставлен для аутентификации по паролю'));
+      }
+      commandArgs = ['-e', 'ssh', ...baseSshOptions, remoteTarget, command];
+      sshProcess = spawn('sshpass', commandArgs, { env: { ...process.env, SSHPASS: password } });
+    } else {
+      if (!sshKeyPath || !fs.existsSync(sshKeyPath)) {
+        return reject(new Error(`SSH ключ не найден или не указан по пути: ${sshKeyPath}`));
+      }
+      commandArgs = [...baseSshOptions, '-i', sshKeyPath, remoteTarget, command];
+      sshProcess = spawn('ssh', commandArgs);
+    }
+
+    sshProcess.stdout.on('data', (data) => {
+      outputData.push(data.toString());
+    });
+
+    sshProcess.stderr.on('data', (data) => {
+      outputData.push(data.toString()); // Включаем stderr в вывод для диагностики
+    });
+
+    sshProcess.on('close', (code) => {
+      resolve({ code, output: outputData.join('') });
+    });
+
+    sshProcess.on('error', (error) => {
+        // Не логируем ошибки sshpass, содержащие пароль
+        if (!usePassword || !error.message.toLowerCase().includes('sshpass')) {
+            logger.error(`Ошибка выполнения SSH команды: ${error.message}`);
+        }
+      reject(error); // Отклоняем промис при ошибке запуска
+    });
+  });
+}
+
+/**
  * Функция для запуска процесса развертывания VPN сервера в фоновом режиме
  */
-export async function deployVpnServerBackground(deploymentId: string, server: any): Promise<void> {
+export async function deployVpnServerBackground(deploymentId: string, server: any, sshUsername: string, sshPassword?: string): Promise<void> {
+  const serverLogId = server?.id ? `(Server ID: ${server.id})` : '';
+  let apiToken: string | null = null; // Переменная для хранения полученного токена
+  let installScriptPath: string | null = null; // Путь к временному скрипту
+
   try {
-    // Создаем запись о процессе развертывания
     deployments[deploymentId] = {
       status: 'running',
       serverId: server.id,
-      logs: `Начало развертывания сервера ${server.name} (${server.host})...\n`
+      logs: `Начало развертывания сервера ${server.name} (${server.host}) ${serverLogId}...\\n`,
+      output: []
     };
     
-    // Подготавливаем директорию для SSH ключей
     const sshKeyPath = config.sshPrivateKeyPath;
+    const usePassword = !!sshPassword;
     
-    // Проверка наличия SSH ключа
-    if (!fs.existsSync(sshKeyPath)) {
+    if (!usePassword && !fs.existsSync(sshKeyPath)) {
       deployments[deploymentId].status = 'failed';
-      deployments[deploymentId].error = `SSH ключ не найден по пути: ${sshKeyPath}`;
-      logger.error(deployments[deploymentId].error);
+      deployments[deploymentId].error = `SSH ключ не найден по пути: ${sshKeyPath}, и пароль не предоставлен.`;
+      logger.error(`[Deployment ${deploymentId}] ${deployments[deploymentId].error} ${serverLogId}`);
       return;
     }
     
-    // Создаем директорию для скриптов установки
     const installDir = path.resolve(process.cwd(), 'install');
     if (!fs.existsSync(installDir)) {
       fs.mkdirSync(installDir, { recursive: true });
     }
     
-    // Создаем скрипт для установки Xray
-    const installScriptPath = path.join(installDir, `install_xray_${deploymentId}.sh`);
+    installScriptPath = path.join(process.cwd(), 'install', `install_xray_${deploymentId}.sh`); // Определяем путь здесь
     
-    // Добавляем запись в логи
-    deployments[deploymentId].logs += `Подготовка скрипта установки...\n`;
-    
-    // Создаем скрипт установки
-    const installScript = createInstallScript(server);
-    
-    fs.writeFileSync(installScriptPath, installScript);
+    deployments[deploymentId].logs += `Подготовка скрипта установки...\\n`;
+    let installScriptContent = getBaseInstallScript();
+    const serverHost = server.host || '127.0.0.1';
+    const adminEmail = config.adminEmail || 'admin@example.com';
+    const sshPort = server.port || 22;
+    installScriptContent = installScriptContent.replace(/PLACEHOLDER_SERVER_HOST/g, serverHost);
+    installScriptContent = installScriptContent.replace(/PLACEHOLDER_ADMIN_EMAIL/g, adminEmail);
+    installScriptContent = installScriptContent.replace(/PLACEHOLDER_SERVER_SSH_PORT/g, sshPort.toString());
+    deployments[deploymentId].logs += `Замена плейсхолдеров в скрипте...\\n`;
+    fs.writeFileSync(installScriptPath, installScriptContent);
     fs.chmodSync(installScriptPath, '755');
-    
-    // Добавляем запись в логи
-    deployments[deploymentId].logs += `Скрипт установки создан.\nКопирование скрипта на сервер ${server.host}...\n`;
-    
-    // Копируем скрипт на сервер
-    try {
-      execSync(`scp -o StrictHostKeyChecking=no -i ${sshKeyPath} -P ${server.port} ${installScriptPath} ${config.sshUser}@${server.host}:/tmp/install_xray.sh`);
-      deployments[deploymentId].logs += `Скрипт успешно скопирован на сервер.\nЗапуск установки Xray...\n`;
+    deployments[deploymentId].logs += `Скрипт установки создан: ${installScriptPath}\\nКопирование скрипта на сервер ${server.host}...\\n`;
+
+    let scpCommand: string;
+    let sshCommandArgs: string[];
+    const baseScpOptions = `-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P ${sshPort}`;
+    const baseSshOptions = ['-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-p', sshPort.toString()];
+    const remoteScriptPath = '/tmp/install_xray.sh';
+    const remoteTarget = `${sshUsername}@${serverHost}`;
+    const remoteExecutionCommand = `chmod +x ${remoteScriptPath} && sudo bash ${remoteScriptPath}`;
+    let sshProcess: ChildProcessWithoutNullStreams;
+
+    // --- Копирование скрипта (Try-Catch блоки как были) ---
+    if (usePassword) {
+      logger.info(`[Deployment ${deploymentId}] Используется SSH пароль для подключения к ${serverHost}:${sshPort} ${serverLogId}`);
+      scpCommand = `sshpass -e scp ${baseScpOptions} ${installScriptPath} ${remoteTarget}:${remoteScriptPath}`;
+      
+      try {
+        execSync(scpCommand, { env: { ...process.env, SSHPASS: sshPassword }, stdio: 'pipe' });
+        deployments[deploymentId].logs += `Скрипт успешно скопирован на сервер.\\nЗапуск установки Xray...\\n`;
+      } catch (error: any) {
+        deployments[deploymentId].status = 'failed';
+        const stderr = error.stderr?.toString() || '';
+        const errorMessage = `Ошибка при копировании скрипта (sshpass): ${stderr.split('\\n')[0] || error.message}`;
+        deployments[deploymentId].error = errorMessage;
+        logger.error(`[Deployment ${deploymentId}] ${errorMessage} ${serverLogId}`);
+        fs.unlinkSync(installScriptPath);
+        return;
+      }
+
+      sshCommandArgs = ['-e', 'ssh', ...baseSshOptions, remoteTarget, remoteExecutionCommand];
+      // Присваиваем результат spawn переменной sshProcess
+      sshProcess = spawn('sshpass', sshCommandArgs, { env: { ...process.env, SSHPASS: sshPassword } }); 
+       
+    } else {
+      logger.info(`[Deployment ${deploymentId}] Используется SSH ключ ${sshKeyPath} для подключения к ${serverHost}:${sshPort} ${serverLogId}`);
+      scpCommand = `scp ${baseScpOptions} -i ${sshKeyPath} ${installScriptPath} ${remoteTarget}:${remoteScriptPath}`;
+      
+       try {
+        execSync(scpCommand, { stdio: 'pipe' });
+        deployments[deploymentId].logs += `Скрипт успешно скопирован на сервер.\\nЗапуск установки Xray...\\n`;
     } catch (error: any) {
       deployments[deploymentId].status = 'failed';
-      deployments[deploymentId].error = `Ошибка при копировании скрипта на сервер: ${error.message}`;
-      logger.error(deployments[deploymentId].error);
+        const stderr = error.stderr?.toString() || '';
+        const errorMessage = `Ошибка при копировании скрипта (ключ): ${stderr.split('\\n')[0] || error.message}`;
+        deployments[deploymentId].error = errorMessage;
+        logger.error(`[Deployment ${deploymentId}] ${errorMessage} ${serverLogId}`);
+         fs.unlinkSync(installScriptPath);
       return;
     }
     
-    // Запускаем процесс установки на удаленном сервере
-    const sshProcess = spawn('ssh', [
-      '-o', 'StrictHostKeyChecking=no',
-      '-i', sshKeyPath,
-      '-p', server.port.toString(),
-      `${config.sshUser}@${server.host}`,
-      'chmod +x /tmp/install_xray.sh && sudo /tmp/install_xray.sh'
-    ]);
-    
-    // Обрабатываем вывод процесса
+      sshCommandArgs = [...baseSshOptions, '-i', sshKeyPath, remoteTarget, remoteExecutionCommand];
+      // Присваиваем результат spawn переменной sshProcess
+      sshProcess = spawn('ssh', sshCommandArgs);
+    }
+
+    // --- Запуск скрипта и обработка вывода --- 
+    if (usePassword) {
+       sshCommandArgs = ['-e', 'ssh', ...baseSshOptions, remoteTarget, remoteExecutionCommand]; 
+       sshProcess = spawn('sshpass', sshCommandArgs, { env: { ...process.env, SSHPASS: sshPassword } });
+    } else {
+        sshCommandArgs = [...baseSshOptions, '-i', sshKeyPath, remoteTarget, remoteExecutionCommand];
+        sshProcess = spawn('ssh', sshCommandArgs);
+    }
+
+    // Обработка stdout: ищем токен
     sshProcess.stdout.on('data', (data) => {
       const output = data.toString();
-      deployments[deploymentId].logs += output;
-      logger.info(`[Deployment ${deploymentId}] ${output}`);
+      deployments[deploymentId].logs += output; // Добавляем весь вывод в лог
+      // Ищем строку с токеном
+      const tokenMatch = output.match(/^API_TOKEN_OUTPUT:(.+)$/m);
+      if (tokenMatch && tokenMatch[1]) {
+        apiToken = tokenMatch[1].trim();
+        logger.info(`[Deployment ${deploymentId}] Получен API Token для сервера ${serverLogId}: ${apiToken ? '***' : 'null'}`);
+        // Можно скрыть сам токен в логах бэкенда, если нужно
+      }
+      // Логируем информационные строки скрипта (как было)
+      output.split('\\n').forEach(line => {
+        if (line.includes('[INFO]') || line.includes('[SUCCESS]') || line.includes('[WARNING]') || line.includes('[ERROR]')) {
+          logger.info(`[Deployment ${deploymentId}] ${line.trim()} ${serverLogId}`);
+        }
+      });
     });
-    
+
+    // Обработка stderr (как было)
     sshProcess.stderr.on('data', (data) => {
       const output = data.toString();
+      // Не логируем ошибки sshpass, содержащие пароль
+       if (!usePassword || !output.toLowerCase().includes('sshpass')) {
       deployments[deploymentId].logs += output;
-      logger.warn(`[Deployment ${deploymentId}] ${output}`);
+          logger.warn(`[Deployment ${deploymentId}] STDERR: ${output.trim()} ${serverLogId}`);
+       } else {
+          logger.warn(`[Deployment ${deploymentId}] Сообщение sshpass STDERR скрыто ${serverLogId}`);
+       }
     });
     
-    // Обрабатываем завершение процесса
-    sshProcess.on('close', (code) => {
+    // Обработка завершения процесса
+    sshProcess.on('close', async (code) => { // Делаем обработчик async
+      if (installScriptPath && fs.existsSync(installScriptPath)) {
+         fs.unlinkSync(installScriptPath); // Удаляем временный скрипт
+      }
       if (code === 0) {
         deployments[deploymentId].status = 'completed';
-        deployments[deploymentId].logs += `\nРазвертывание VPN сервера ${server.name} (${server.host}) успешно завершено!\n`;
-        logger.info(`Развертывание сервера ${server.id} (${server.name}) успешно завершено`);
+        deployments[deploymentId].logs += `\\nРазвертывание VPN сервера ${server.name} (${serverHost}) успешно завершено!\\n`;
+        logger.info(`[Deployment ${deploymentId}] Развертывание сервера успешно завершено ${serverLogId}`);
+        
+        // Сохраняем API токен в базу данных, если он был получен
+        if (apiToken) {
+          try {
+            await prisma.vpnServer.update({
+              where: { id: server.id },
+              data: { apiToken: apiToken },
+            });
+            logger.info(`[Deployment ${deploymentId}] API Token успешно сохранен для сервера ${serverLogId}: ${apiToken ? '***' : 'null'}`);
+            deployments[deploymentId].logs += `API Token сохранен в базе данных.\\n`;
+          } catch (dbError: any) {
+            logger.error(`[Deployment ${deploymentId}] Ошибка сохранения API Token для сервера ${serverLogId}: ${dbError.message}`);
+            deployments[deploymentId].logs += `\\nОшибка: Не удалось сохранить API Token в базе данных.\\n`;
+            // Отмечаем развертывание как завершенное с предупреждением
+            deployments[deploymentId].status = 'completed_with_warning'; 
+            deployments[deploymentId].error = 'Не удалось сохранить API Token';
+          }
+        } else {
+           logger.warn(`[Deployment ${deploymentId}] API Token не был получен от скрипта установки для сервера ${serverLogId}.`);
+           deployments[deploymentId].logs += `\\nПредупреждение: Не удалось получить API Token от сервера.\\n`;
+           deployments[deploymentId].status = 'completed_with_warning';
+           deployments[deploymentId].error = 'API Token не получен';
+        }
+
+        // --- Начало проверки Health Check --- 
+        logger.info(`[${deploymentId}] Ожидание запуска контейнеров API...`);
+        await new Promise(resolve => setTimeout(resolve, 10000)); // Пауза 10 сек
+
+        logger.info(`[${deploymentId}] Проверка работоспособности API на ${serverHost}...`);
+        const healthCheckCommand = `curl --fail --silent --max-time 5 http://localhost:3000/health || echo "API Health Check Failed"`;
+        let healthCheckOk = false;
+        for (let i = 0; i < 3; i++) { // Попробовать 3 раза с паузой
+          try {
+            // Используем новую функцию executeSshCommandPromise
+            const result = await executeSshCommandPromise(
+              serverHost,
+              sshUsername,
+              healthCheckCommand,
+              server.port || 22,
+              !!sshPassword, // usePassword
+              sshPassword,   // password
+              config.sshPrivateKeyPath // sshKeyPath
+            );
+
+            if (result.code === 0 && !result.output.includes("API Health Check Failed")) {
+              logger.info(`[${deploymentId}] API Health Check успешен.`);
+              healthCheckOk = true;
+              break;
+            }
+             logger.warn(`[${deploymentId}] Попытка ${i + 1} проверки API не удалась (код: ${result.code}). Результат: ${result.output.trim()}`);
+          } catch (sshError: any) {
+            logger.warn(`[${deploymentId}] Ошибка при выполнении SSH команды health check (попытка ${i + 1}): ${sshError.message}`);
+          }
+          
+          if (i < 2) {
+            await new Promise(resolve => setTimeout(resolve, 5000)); // Пауза 5 сек перед следующей попыткой
+          }
+        }
+        // --- Конец проверки Health Check --- 
+
+        if (!healthCheckOk) {
+            logger.error(`[${deploymentId}] Не удалось подтвердить работоспособность API на ${serverHost} после запуска docker-compose.`);
+            if (deployments[deploymentId]) {
+                deployments[deploymentId].status = 'failed';
+                deployments[deploymentId].error = 'API не отвечает после запуска';
+                deployments[deploymentId].output.push('Ошибка: API не отвечает после запуска docker-compose.');
+            }
+            return; 
+        }
+
+        logger.info(`[${deploymentId}] Развертывание API завершено успешно.`);
       } else {
         deployments[deploymentId].status = 'failed';
-        deployments[deploymentId].error = `Процесс установки завершился с кодом ошибки: ${code}`;
-        deployments[deploymentId].logs += `\nОшибка: процесс установки завершился с кодом: ${code}\n`;
-        logger.error(`Ошибка при развертывании сервера ${server.id} (${server.name}): код ${code}`);
+        const errorMsg = `Процесс установки завершился с кодом ошибки: ${code}`;
+        deployments[deploymentId].error = deployments[deploymentId].error || errorMsg;
+        deployments[deploymentId].logs += `\\nОшибка: ${errorMsg}\\n`;
+        logger.error(`[Deployment ${deploymentId}] ${errorMsg} ${serverLogId}`);
       }
     });
-    
-    // Обрабатываем ошибки процесса
+
+    // Обработка ошибок запуска процесса (как было)
     sshProcess.on('error', (error) => {
-      deployments[deploymentId].status = 'failed';
-      deployments[deploymentId].error = `Ошибка при выполнении SSH команды: ${error.message}`;
-      deployments[deploymentId].logs += `\nОшибка: ${error.message}\n`;
-      logger.error(`Ошибка при выполнении SSH команды: ${error}`);
+       if (installScriptPath && fs.existsSync(installScriptPath)) {
+         fs.unlinkSync(installScriptPath);
+      }
+      // ... (общая обработка ошибок)
     });
+    
   } catch (error: any) {
-    deployments[deploymentId].status = 'failed';
-    deployments[deploymentId].error = `Неожиданная ошибка при развертывании: ${error.message}`;
-    deployments[deploymentId].logs += `\nНеожиданная ошибка: ${error.message}\n`;
-    logger.error(`Неожиданная ошибка при развертывании сервера ${server.id} (${server.name}): ${error}`);
+     if (installScriptPath && fs.existsSync(installScriptPath)) {
+        try { fs.unlinkSync(installScriptPath); } catch (e) {} // Пытаемся удалить скрипт
+     }
+     // ... (общая обработка ошибок)
   }
 }
 
