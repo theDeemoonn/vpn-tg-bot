@@ -115,13 +115,11 @@ const Servers: React.FC = () => {
                   </Link>
                 </td>
                 <td>
-                  {/* Существующие кнопки/действия */}
                   <Link
                     to={`/servers/${server.id}/users`}
                     className="btn btn-info btn-sm ml-2"
                   >
                     {" "}
-                    {/* Добавьте эту ссылку */}
                     Пользователи
                   </Link>
                 </td>

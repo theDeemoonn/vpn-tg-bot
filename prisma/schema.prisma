@@ -20,6 +20,8 @@ model User {
   username       String?       // Telegram username (может быть null)
   firstName      String
   lastName       String?
+  hashedPassword String?       // Добавляем поле для хешированного пароля
+
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   isActive       Boolean       @default(true)

@@ -497,7 +497,7 @@ export async function deployVpnServerBackground(deploymentId: string, server: an
        if (!usePassword || !output.toLowerCase().includes('sshpass')) {
       deployments[deploymentId].logs += output;
           logger.warn(`[Deployment ${deploymentId}] STDERR: ${output.trim()} ${serverLogId}`);
-       } else {
+  } else {
           logger.warn(`[Deployment ${deploymentId}] Сообщение sshpass STDERR скрыто ${serverLogId}`);
        }
     });
@@ -574,13 +574,13 @@ export async function deployVpnServerBackground(deploymentId: string, server: an
         if (!healthCheckOk) {
             logger.error(`[${deploymentId}] Не удалось подтвердить работоспособность API на ${serverHost} после запуска docker-compose.`);
             if (deployments[deploymentId]) {
-                deployments[deploymentId].status = 'failed';
+      deployments[deploymentId].status = 'failed';
                 deployments[deploymentId].error = 'API не отвечает после запуска';
                 deployments[deploymentId].output.push('Ошибка: API не отвечает после запуска docker-compose.');
             }
-            return; 
-        }
-
+      return;
+    }
+    
         logger.info(`[${deploymentId}] Развертывание API завершено успешно.`);
       } else {
         deployments[deploymentId].status = 'failed';

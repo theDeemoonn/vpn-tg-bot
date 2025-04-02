@@ -26,28 +26,28 @@ export async function initializeRealServer(): Promise<void> {
           port: 1194,
           maxClients: config.defaultMaxClients,
           isActive: true,
-          configData: `# Базовая конфигурация OpenVPN сервера
-port 1194
-proto udp
-dev tun
-ca ca.crt
-cert server.crt
-key server.key
-dh dh.pem
-server 10.8.0.0 255.255.255.0
-ifconfig-pool-persist ipp.txt
-push "redirect-gateway def1 bypass-dhcp"
-push "dhcp-option DNS 8.8.8.8"
-push "dhcp-option DNS 8.8.4.4"
-keepalive 10 120
-cipher AES-256-GCM
-auth SHA256
-user nobody
-group nogroup
-persist-key
-persist-tun
-status openvpn-status.log
-verb 3`,
+//           configData: `# Базовая конфигурация OpenVPN сервера
+// port 1194
+// proto udp
+// dev tun
+// ca ca.crt
+// cert server.crt
+// key server.key
+// dh dh.pem
+// server 10.8.0.0 255.255.255.0
+// ifconfig-pool-persist ipp.txt
+// push "redirect-gateway def1 bypass-dhcp"
+// push "dhcp-option DNS 8.8.8.8"
+// push "dhcp-option DNS 8.8.4.4"
+// keepalive 10 120
+// cipher AES-256-GCM
+// auth SHA256
+// user nobody
+// group nogroup
+// persist-key
+// persist-tun
+// status openvpn-status.log
+// verb 3`,
           location: 'local',
           provider: 'local'
         }
