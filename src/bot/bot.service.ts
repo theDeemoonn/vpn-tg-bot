@@ -18,9 +18,9 @@ class BotService {
     if (!botToken) {
       throw new Error('TELEGRAM_BOT_TOKEN не определен в конфигурации.');
     }
-    // Опция polling: true заставляет бота опрашивать сервер Telegram на наличие новых сообщений
-    this.bot = new TelegramBot(botToken, { polling: true });
-    logger.info('Telegram бот инициализирован в режиме polling.');
+    // Важно: убираем режим polling, чтобы избежать конфликта
+    this.bot = new TelegramBot(botToken, { polling: false });
+    logger.info('Telegram бот инициализирован БЕЗ режима polling.');
   }
 
   public startListening() {

@@ -117,7 +117,8 @@ function setupBackgroundTasks() {
   // Сразу запускаем задачи при старте
   logger.info('Запуск начальных задач...');
 
-  botService.startListening();
+  // УБИРАЕМ botService.startListening() для избежания конфликта (у нас уже есть бот из startBot)
+  // botService.startListening();
 
   // Обновление статусов подписок
   subscriptionService.updateSubscriptionStatuses()
