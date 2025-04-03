@@ -41,17 +41,21 @@ model VpnServer {
   id                Int           @id @default(autoincrement())
   name              String        // Название сервера (например, "Amsterdam-1")
   host              String        // IP-адрес или доменное имя
-  port              Int           // SSH порт
-  location          String        // Географическое расположение
-  provider          String        // Провайдер сервера (например, "DigitalOcean")
-  isActive          Boolean       @default(true)
-  maxClients        Int           @default(50) // Максимальное количество одновременных подключений
+  port              Int           // Теперь это порт Xray (443), а не SSH
+  location          String?       // Географическое расположение
+  provider          String?       // Провайдер сервера (например, "DigitalOcean")
+  isActive          Boolean       @default(false) // По умолчанию неактивен
+  maxClients        Int           @default(100)
   currentClients    Int           @default(0)  // Текущее количество подключений
   isAutoScaled      Boolean       @default(false) // Флаг, что сервер создан автоматически
-  apiToken          String?       // Токен для API  
+  apiToken          String?       @unique
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
-  configData      String?  
+  configData        String?       // Тип конфигурации ('docker', 'manual')
+  realityPublicKey  String?
+  realityShortId    String?
+  initialUserId     String?       // UUID первого (и пока единственного) пользователя на этом сервере
+
   subscriptions     Subscription[]
 }
 
