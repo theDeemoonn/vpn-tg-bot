@@ -16,6 +16,7 @@ import apiRoutes from './api';
 import { initScheduler } from './services/scheduler';
 import { initializeRealServer } from './services/server';
 import { startAccessControlJob } from './jobs/accessControl.job';
+import { botService } from './bot/bot.service';
 
 // Загружаем переменные окружения
 dotenv.config();
@@ -115,6 +116,8 @@ function setupBackgroundTasks() {
 
   // Сразу запускаем задачи при старте
   logger.info('Запуск начальных задач...');
+
+  botService.startListening();
 
   // Обновление статусов подписок
   subscriptionService.updateSubscriptionStatuses()
