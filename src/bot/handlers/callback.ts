@@ -577,78 +577,72 @@ export const handleCallbackQuery: CallbackQueryHandler = (bot: TelegramBot) => a
           parse_mode: 'Markdown'
         });
 
-        // Если конфигурация не существует, генерируем ее
-        if (!subscription.vpnConfig) {
-          await generateClientConfig(subscription);
+        const server = subscription.vpnServer;
 
-          // Получаем обновленную подписку с конфигурацией
-          const updatedSubscription = await prisma.subscription.findUnique({
-            where: { id: subscriptionId },
-            include: {
-              user: true,
-              vpnServer: true
+        // Проверка данных сервера
+        if (!server || !server.isActive) {
+          await bot.editMessageText(`❌ Возникла проблема с назначенным вам сервером. Обратитесь в поддержку.`, {
+            chat_id: chatId,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'subscription' }]]
             }
           });
-
-          if (!updatedSubscription || !updatedSubscription.vpnConfig) {
-            await bot.editMessageText(`❌ Не удалось сгенерировать конфигурацию. Пожалуйста, попробуйте позже или обратитесь в поддержку.`, {
-              chat_id: chatId,
-              message_id: messageId,
-              parse_mode: 'Markdown',
-              reply_markup: {
-                inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'subscription' }]]
-              }
-            });
-            return;
-          }
-
-          subscription.vpnConfig = updatedSubscription.vpnConfig;
+          return;
         }
 
-        // Отправляем конфигурацию пользователю в виде файла
-        const configBuffer = Buffer.from(subscription.vpnConfig);
-
-        const fileOptions = {
-          filename: `vpn_config_${subscription.id}.json`,
-          contentType: 'application/json'
-        };
-
-        await bot.sendDocument(chatId, configBuffer, {
-          caption: '🔐 Ваша VPN конфигурация готова! Импортируйте этот файл в клиент Xray.'
-        }, fileOptions);
-
-        // Генерируем и отправляем QR-код для конфигурации
-        try {
-          // Генерируем QR-код для конфигурации
-          const qrCodePath = await qrcodeService.generateVpnConfigQrCode(
-              subscription.vpnConfig,
-              subscription.userId,
-              subscription.id
-          );
-
-          // Отправляем QR-код
-          await bot.sendPhoto(chatId, qrCodePath, {
-            caption: '📱 Отсканируйте этот QR-код мобильным приложением для быстрой настройки VPN.'
+        if (server.configData !== 'docker' || !server.initialUserId || !server.realityPublicKey || !server.realityShortId) {
+          await bot.editMessageText(`❌ Конфигурация для вашего сервера еще не готова или неполная. Обратитесь в поддержку.`, {
+            chat_id: chatId,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'subscription' }]]
+            }
           });
-
-          // Удаляем временный файл QR-кода
-          qrcodeService.removeQrCodeFile(qrCodePath);
-        } catch (error: any) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          logger.error(`Ошибка при генерации QR-кода: ${errorMessage}`);
-          // Не прерываем выполнение, так как основная конфигурация уже отправлена
-          await bot.sendMessage(chatId, `⚠️ Не удалось сгенерировать QR-код: ${errorMessage}`);
+          return;
         }
 
-        // Отправляем инструкции по установке
+        // Импортируем функцию generateVlessUrl
+        const { generateVlessUrl } = require('../../utils/generateVlessUrl');
+        const QRCode = require('qrcode');
+
+        // Генерируем VLESS URL для подключения
+        const vlessUrl = generateVlessUrl({
+          uuid: server.initialUserId, 
+          address: server.host,
+          port: server.port, 
+          publicKey: server.realityPublicKey,
+          shortId: server.realityShortId,
+          serverName: 'www.google.com', // TODO: Вынести в настройки
+          fingerprint: 'chrome', // TODO: Вынести в настройки
+          serverDescription: server.name || server.host,
+        });
+
+        // Генерируем QR-код
+        const qrCodeDataUrl = await QRCode.toDataURL(vlessUrl);
+        const base64Data = qrCodeDataUrl.replace(/^data:image\/png;base64,/, "");
+        const qrCodeBuffer = Buffer.from(base64Data, 'base64');
+
+        // Отправляем VLESS-ссылку в текстовом виде
+        await bot.sendMessage(chatId, `Ваша ссылка для подключения (скопируйте):\n<code>${vlessUrl}</code>`, { parse_mode: 'HTML' });
+
+        // Отправляем QR-код как фото
+        await bot.sendPhoto(chatId, qrCodeBuffer, {
+          caption: `QR-код для подключения к серверу "${server.name || server.host}" (отсканируйте в приложении).`,
+        });
+
+        // Восстанавливаем интерфейс подписок и отправляем инструкции
         const instructionMessage = `
-📝 *Инструкции по установке:*
+📱 *Инструкции по установке:*
 
-1. Установите клиент Xray для вашего устройства
-2. Импортируйте файл конфигурации или отсканируйте QR-код
-3. Подключитесь к VPN
+1. Установите приложение v2rayNG (Android) или FoXray (iOS)
+2. Нажмите на ссылку для копирования
+3. В приложении добавьте новую конфигурацию "из буфера обмена"
+4. Или отсканируйте QR-код камерой приложения
 
-Для более подробных инструкций воспользуйтесь командой /help
+Приятного использования!
         `;
 
         const keyboard = {
