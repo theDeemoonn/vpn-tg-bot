@@ -220,7 +220,7 @@ async function copyFileScp(deploymentId: string, host: string, port: number, use
       scpProcess.on('close', (code) => {
         if (code === 0) {
           resolve({ success: true });
-        } else {
+  } else {
           resolve({ success: false, error: `Ошибка SCP (код: ${code}): ${stderr.trim()}` });
         }
       });
@@ -454,7 +454,7 @@ async function deployVpnServerDockerBackground(
     deployments[deploymentId].logs += `Контейнер ${xrayContainerName} успешно запущен и работает (${statusResult.output.trim()}).\n`;
 
     // --- Завершение --- 
-    deployments[deploymentId].status = 'completed';
+        deployments[deploymentId].status = 'completed';
     deployments[deploymentId].logs += `\n--- Развертывание успешно завершено! --- \n`;
     logger.info(`[Deployment ${deploymentId}] Развертывание Xray через Docker завершено успешно ${serverLogId}`);
 

@@ -32,8 +32,17 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-# Устанавливаем необходимые зависимости для Prisma
-RUN apk add --no-cache openssl libc6-compat
+# Устанавливаем системные зависимости: OpenSSL, libc, SSH И XRAY (для генерации ключей)
+RUN apk add --no-cache openssl libc6-compat sshpass openssh-client unzip wget && \
+    XRAY_VERSION=$(wget -qO- "https://api.github.com/repos/XTLS/Xray-core/releases/latest" | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/') && \
+    echo "Downloading Xray version: $XRAY_VERSION" && \
+    wget -O /tmp/xray.zip "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" && \
+    unzip /tmp/xray.zip -d /usr/local/bin xray geoip.dat geosite.dat && \
+    rm /tmp/xray.zip && \
+    chmod +x /usr/local/bin/xray /usr/bin/sshpass /usr/bin/ssh /usr/bin/scp && \
+    # Проверяем наличие
+    which xray && which sshpass && which ssh && which scp
+    
 
 # Указываем переменную окружения для Prisma, чтобы использовать OpenSSL 3.x
 ENV PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1
