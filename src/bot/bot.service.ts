@@ -44,14 +44,16 @@ class BotService {
 
   private handleErrors() {
       this.bot.on('polling_error', (error) => {
-          logger.error('Polling error:', error.message);
-          // Можно добавить логику для перезапуска или уведомления
+          // Логируем только сообщение об ошибке
+          logger.error('Polling error:', error.message || String(error)); 
       });
        this.bot.on('webhook_error', (error) => {
-          logger.error('Webhook error:', error.message);
+          // Логируем только сообщение об ошибке
+          logger.error('Webhook error:', error.message || String(error));
       });
       this.bot.on('error', (error) => {
-          logger.error('General bot error:', error.message);
+          // Логируем только сообщение об ошибке
+          logger.error('General bot error:', error.message || String(error));
       });
   }
 
